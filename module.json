@@ -19,6 +19,13 @@
         "id": "pf1",
         "type": "system"
       }
+    ],
+    "recommends": [
+      {
+        "id": "lib-wrapper",
+        "type": "module",
+        "reason": "Enables flash-free prevention of archetype-replaced class features on level-up. Without it, replaced features are removed reactively instead."
+      }
     ]
   },
   "esmodules": [

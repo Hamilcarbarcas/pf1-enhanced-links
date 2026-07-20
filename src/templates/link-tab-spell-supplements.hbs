@@ -7,17 +7,17 @@
     <label class="el-control">
       <span>{{localize "PF1EL.Mode.Label"}}</span>
       <select class="el-mode" {{#unless editable}}disabled{{/unless}}>
-        <option value="class" {{selected isClassMode}} {{#unless canClass}}disabled{{/unless}}>
+        <option value="class" {{#if isClassMode}}selected{{/if}} {{#unless canClass}}disabled{{/unless}}>
           {{localize "PF1EL.Mode.Class"}}
         </option>
-        <option value="spelllike" {{selected isSpelllikeMode}}>
+        <option value="spelllike" {{#if isSpelllikeMode}}selected{{/if}}>
           {{localize "PF1EL.Mode.Spelllike"}}
         </option>
       </select>
     </label>
 
     <label class="el-control el-checkbox">
-      <input type="checkbox" class="el-gated" {{checked gated}} {{#unless editable}}disabled{{/unless}}>
+      <input type="checkbox" class="el-gated" {{#if gated}}checked{{/if}} {{#unless editable}}disabled{{/unless}}>
       <span>{{localize "PF1EL.Gating.Label"}}</span>
     </label>
   </div>

@@ -27,6 +27,7 @@ import {
   getClassFeatures,
   getSpellSupplements,
   getAssociatedClass,
+  getArchetype,
 } from "./enhanced-links.mjs";
 
 const LOG = "PF1 Enhanced Links |";
@@ -46,6 +47,11 @@ const busy = new Set();
 /** Only the primary GM client mutates, to avoid duplicate grants across clients. */
 function isPrimaryGM() {
   return game.users?.activeGM?.isSelf === true;
+}
+
+/** Normalize a uuid for comparison (relative vs absolute forms). */
+function uniformUuid(uuid) {
+  return pf1?.utils?.internal?.uniformUuid?.(uuid) ?? uuid ?? "";
 }
 
 // ─── Gate quantities ────────────────────────────────────────────────────────────
@@ -185,6 +191,60 @@ function buildDesired(actor, parent) {
   return out;
 }
 
+// ─── Archetypes ─────────────────────────────────────────────────────────────────
+
+/**
+ * Excluded association source-uuids from every active archetype on the actor that
+ * targets the given class tag. Only archetypes whose associated class is actually
+ * present on the actor count.
+ */
+function collectExcludedForClass(actor, tag) {
+  const set = new Set();
+  if (!actor || !tag || !actor.classes?.[tag]) return set;
+  for (const it of actor.items) {
+    const arch = getArchetype(it);
+    if (!arch.replaces || !arch.excluded.length) continue;
+    if (getAssociatedClass(it) !== tag) continue;
+    for (const u of arch.excluded) set.add(uniformUuid(u));
+  }
+  return set;
+}
+
+/** All association uuids excluded by any active archetype, across all classes. */
+function collectAllExcluded(actor) {
+  const set = new Set();
+  for (const it of actor.items) {
+    const arch = getArchetype(it);
+    if (!arch.replaces || !arch.excluded.length) continue;
+    const tag = getAssociatedClass(it);
+    if (!tag || !actor.classes?.[tag]) continue;
+    for (const u of arch.excluded) set.add(uniformUuid(u));
+  }
+  return set;
+}
+
+/**
+ * Remove base-class features already on the actor that an active archetype
+ * excludes — the "removed if present" half. Level-up prevention (the flash-free
+ * half) is handled by the class-level-change wrapper below. Matches items by the
+ * compendium source the system stamps on class-association grants.
+ */
+async function enforceArchetypes(actor) {
+  const excluded = collectAllExcluded(actor);
+  if (!excluded.size) return false;
+
+  const toDelete = actor.items
+    .filter((it) => {
+      const src = it._stats?.compendiumSource;
+      return src && excluded.has(uniformUuid(src));
+    })
+    .map((it) => it.id);
+
+  if (!toDelete.length) return false;
+  await actor.deleteEmbeddedDocuments("Item", toDelete, { render: false });
+  return true;
+}
+
 // ─── Reconcile ──────────────────────────────────────────────────────────────────
 
 /** Whether an item hosts any Enhanced Links configuration. */
@@ -192,7 +252,9 @@ function isConfiguredParent(item) {
   const cf = item.getFlag(MODULE_ID, "classFeatures");
   if (Array.isArray(cf) && cf.length) return true;
   const ss = item.getFlag(MODULE_ID, "spellSupplements");
-  return Array.isArray(ss?.items) && ss.items.length > 0;
+  if (Array.isArray(ss?.items) && ss.items.length > 0) return true;
+  const arch = item.getFlag(MODULE_ID, "archetype");
+  return arch?.replaces === true && Array.isArray(arch?.excluded) && arch.excluded.length > 0;
 }
 
 /**
@@ -248,7 +310,7 @@ async function reconcileParent(actor, parent) {
     }
   }
 
-  if (changed) await parent.setFlag(MODULE_ID, GRANTED, ledger);
+  if (changed) await parent.update({ [`flags.${MODULE_ID}.${GRANTED}`]: ledger }, { render: false });
   return changed;
 }
 
@@ -267,6 +329,7 @@ async function reconcileActor(actor) {
       for (const parent of actor.items.filter(isConfiguredParent)) {
         if (await reconcileParent(actor, parent)) changed = true;
       }
+      if (await enforceArchetypes(actor)) changed = true;
       if (!changed) return;
       if (pass === MAX_PASSES - 1) {
         console.warn(LOG, "reconcile hit the pass cap on", actor.name, "— check for a link cycle.");
@@ -301,8 +364,42 @@ function collectGrantDescendants(actor, rootId) {
 // ─── Triggers ───────────────────────────────────────────────────────────────────
 
 Hooks.once("ready", () => {
+  registerLevelUpFilter();
   console.log(LOG, "engine ready");
 });
+
+/**
+ * Hard prevention of archetype-replaced features on level-up: wrap the class's
+ * _onLevelChange so excluded associations are hidden for the duration of the
+ * grant, meaning the system never creates them (no flash). Requires lib-wrapper;
+ * without it we degrade to the reconcile sweep, which removes them just after.
+ */
+function registerLevelUpFilter() {
+  if (!game.modules.get("lib-wrapper")?.active) {
+    console.warn(LOG, "lib-wrapper inactive — replaced features are removed reactively instead of blocked.");
+    return;
+  }
+
+  libWrapper.register(
+    MODULE_ID,
+    "CONFIG.Item.documentClasses.class.prototype._onLevelChange",
+    async function (wrapped, ...args) {
+      const excluded = collectExcludedForClass(this.actor, this.system?.tag);
+      const original = this.system?.links?.classAssociations;
+      if (!excluded.size || !Array.isArray(original)) return wrapped(...args);
+
+      // Temporarily hide excluded associations so the system won't grant them.
+      this.system.links.classAssociations = original.filter((a) => !excluded.has(uniformUuid(a.uuid)));
+      try {
+        return await wrapped(...args);
+      } finally {
+        this.system.links.classAssociations = original;
+      }
+    },
+    "WRAPPER"
+  );
+  console.log(LOG, "level-up filter registered");
+}
 
 // Class level or HD changed (racial HD is a class item too, so HD gates ride this).
 Hooks.on("pf1ClassLevelChange", (actor) => {

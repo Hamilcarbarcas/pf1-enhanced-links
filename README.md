@@ -20,6 +20,14 @@ Drop items here and give each a **level**. When the item's associated class
 child and inherits the same class association — the same behavior as a class's
 own associations, but hosted on a class feature instead of the class.
 
+**Replaces class features (archetypes).** Enable "Replaces class features" and
+drop the **base class** to see its class associations as a checklist; tick the
+ones this feature replaces. On an actor, replaced features are blocked from being
+granted on level-up and removed if already present — so a class feature that grants
+its own replacements *and* replaces base features expresses an archetype end to
+end. (The base-class picker is required because a compendium feature doesn't yet
+know which class it belongs to.)
+
 ### Spell Supplements
 Drop **spells** here and pick a **destination**:
 
@@ -44,6 +52,8 @@ spells are present whenever the item is on the actor.
 
 - Foundry VTT **v13**
 - Pathfinder 1e system **v11.x**
+- **lib-wrapper** (recommended) — enables flash-free blocking of archetype-replaced
+  features on level-up. Without it, those features are removed reactively instead.
 
 ## License
 

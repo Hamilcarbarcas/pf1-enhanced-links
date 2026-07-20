@@ -130,6 +130,48 @@ with their book *pre-assigned*.
 > there — but fills only empty fields (`inUse`, default `class:"_hd"`, a CL
 > formula) and never overwrites a book the user or a class already configured.
 
+## Feature 3 — Archetypes (replaces class features)
+
+An archetype is just a class feature that ① grants its own replacement features
+(Feature 1) and ② suppresses specific base-class associations. Only ② is new.
+
+Config lives alongside the classFeatures list on the same feat:
+
+```
+flags.pf1-enhanced-links.archetype = {
+  replaces:  true,
+  baseClass: "<class uuid>",              // config-time enumeration only
+  excluded:  ["<associationUuid>", ...]   // association source uuids to replace
+}
+```
+
+**Base class is picked explicitly, or pre-filled.** The UX (checklist of the
+class's associations) needs the class in hand, but `system.class` is empty on the
+authored compendium feat — so the "Replaces class features" section takes a
+dropped **base class** and enumerates its `system.links.classAssociations` into a
+checklist. When the feat *is* tied to a class (on an actor), checking the box
+pre-fills the base class from that association (`system.class` → `actor.classes`
+→ the class's compendium source); it stays clearable and replaceable by drop. At
+runtime the concrete class is still resolved via `system.class`; the picked base
+class only exists to author the exclusion list.
+
+**Two enforcement paths:**
+- **Level-up (hard prevention, no flash):** a lib-wrapper around the class's
+  `_onLevelChange` temporarily hides excluded associations, so the system never
+  creates them. Degrades to reactive removal if lib-wrapper is absent.
+- **Already present / config edits (reactive):** `enforceArchetypes` in the
+  reconcile deletes on-actor items whose `_stats.compendiumSource` matches an
+  excluded association uuid. This covers archetypes added after the class already
+  leveled.
+
+**On removal:** replaced features are *not* auto-restored — matching PF1, where
+class features only (re)appear on level-up. *(Deliberate; the removal question was
+settled this way.)*
+
+Scoping: only archetypes whose associated class is present on the actor enforce,
+and matching is by association source uuid, so unrelated items sharing a uuid are
+not affected in practice.
+
 ## Applicability by item
 
 Both class-mode paths pivot on `system.class`; the spell-like path is HD-gated and

@@ -26,6 +26,7 @@ const LOG = "PF1 Enhanced Links |";
 const FLAG = {
   classFeatures: "classFeatures",
   spellSupplements: "spellSupplements",
+  archetype: "archetype",
 };
 
 // Injected sub-tab identifiers. Prefixed so they can never collide with the
@@ -38,6 +39,12 @@ const TAB = {
 const TEMPLATES = {
   classFeatures: `modules/${MODULE_ID}/src/templates/link-tab-class-features.hbs`,
   spellSupplements: `modules/${MODULE_ID}/src/templates/link-tab-spell-supplements.hbs`,
+};
+
+// Per-tab metadata, keyed by kind.
+const TAB_META = {
+  classFeatures: { id: TAB.classFeatures, label: "PF1EL.Tab.ClassFeatures", template: TEMPLATES.classFeatures },
+  spellSupplements: { id: TAB.spellSupplements, label: "PF1EL.Tab.SpellSupplements", template: TEMPLATES.spellSupplements },
 };
 
 // Spell-supplement routing modes.
@@ -73,12 +80,33 @@ export function getSpellSupplements(item) {
   };
 }
 
+/**
+ * Archetype config on a class feature, normalized. When `replaces` is set, the
+ * feature suppresses the listed base-class associations (`excluded`, association
+ * source uuids). `baseClass` is the class uuid used only to enumerate that list
+ * at authoring time; at runtime the actual class is resolved via system.class.
+ */
+export function getArchetype(item) {
+  const raw = item.getFlag(MODULE_ID, FLAG.archetype) ?? {};
+  return {
+    replaces: raw.replaces === true,
+    baseClass: typeof raw.baseClass === "string" && raw.baseClass.length ? raw.baseClass : null,
+    excluded: Array.isArray(raw.excluded) ? [...raw.excluded] : [],
+  };
+}
+
+// Persist with render:false and refresh our own panel in place — a full sheet
+// re-render would momentarily flash the links view back to its first tab.
 function setClassFeatures(item, list) {
-  return item.setFlag(MODULE_ID, FLAG.classFeatures, list);
+  return item.update({ [`flags.${MODULE_ID}.${FLAG.classFeatures}`]: list }, { render: false });
 }
 
 function setSpellSupplements(item, data) {
-  return item.setFlag(MODULE_ID, FLAG.spellSupplements, data);
+  return item.update({ [`flags.${MODULE_ID}.${FLAG.spellSupplements}`]: data }, { render: false });
+}
+
+function setArchetype(item, data) {
+  return item.update({ [`flags.${MODULE_ID}.${FLAG.archetype}`]: data }, { render: false });
 }
 
 // ─── Associated class & applicability ───────────────────────────────────────────
@@ -117,10 +145,11 @@ function appliesClassFeatures(item) {
   return canClassAssociate(item);
 }
 
-// Spell Supplements apply anywhere links do; the spell-like mode needs no class,
-// which is what lets races / templates carry innate casting.
+// Spell Supplements apply anywhere links do — the spell-like mode needs no class,
+// which is what lets races / templates carry innate casting — except spells
+// themselves, which make no sense as a host and would only add clutter.
 function appliesSpellSupplements(item) {
-  return hasLinks(item);
+  return hasLinks(item) && item.type !== "spell";
 }
 
 // ─── DOM helpers ────────────────────────────────────────────────────────────────
@@ -162,6 +191,57 @@ async function resolveEntries(list) {
   return rows;
 }
 
+/**
+ * Best-effort base class for an archetype, derived from the feat's own class
+ * association. system.class is a tag, so resolve it through the owning actor to
+ * the actual class item and return its compendium source (what the exclusion
+ * checklist enumerates from). Returns null off-actor or when no class is tied —
+ * the author then drops a base class explicitly.
+ */
+function deriveBaseClassUuid(item) {
+  const tag = getAssociatedClass(item);
+  const actor = item.actor;
+  if (!tag || !actor) return null;
+  const clsId = actor.classes?.[tag]?._id;
+  const cls = clsId ? actor.items.get(clsId) : null;
+  if (!cls) return null;
+  return cls._stats?.compendiumSource ?? cls.uuid;
+}
+
+/**
+ * Build the archetype template context: the "replaces" toggle, the chosen base
+ * class, and its class associations rendered as an exclusion checklist. The base
+ * class must be picked explicitly (or pre-filled from the feat's own class
+ * association) because system.class is empty at authoring time.
+ */
+async function resolveArchetype(item) {
+  const arch = getArchetype(item);
+  const ctx = { replaces: arch.replaces, hasBaseClass: false, baseClassName: null, associations: [] };
+  if (!arch.replaces || !arch.baseClass) return ctx;
+
+  const baseClass = await fromUuid(arch.baseClass).catch(() => null);
+  if (!baseClass) return ctx;
+
+  ctx.hasBaseClass = true;
+  ctx.baseClassName = baseClass.name;
+
+  const assoc = baseClass.system?.links?.classAssociations ?? [];
+  ctx.associations = await Promise.all(
+    assoc.map(async (a) => {
+      const doc = await fromUuid(a.uuid).catch(() => null);
+      return {
+        uuid: a.uuid,
+        level: a.level ?? 1,
+        name: doc?.name ?? a.uuid,
+        img: doc?.img ?? "icons/svg/item-bag.svg",
+        broken: !doc,
+        excluded: arch.excluded.includes(a.uuid),
+      };
+    })
+  );
+  return ctx;
+}
+
 /** Add a nav entry to the links tab bar and return it. */
 function addNavTab(nav, tabId, label) {
   const a = document.createElement("a");
@@ -187,44 +267,54 @@ Hooks.on("renderItemSheetPF", async (app, html, data) => {
   const editable = app.isEditable;
 
   if (appliesClassFeatures(item)) {
-    await injectClassFeaturesTab({ item, nav, body, editable });
+    await injectTab({ item, nav, body, editable, kind: "classFeatures" });
   }
   if (appliesSpellSupplements(item)) {
-    await injectSpellSupplementsTab({ item, nav, body, editable });
+    await injectTab({ item, nav, body, editable, kind: "spellSupplements" });
   }
+
+  restoreLinksTab(app, nav);
 });
 
-async function injectClassFeaturesTab({ item, nav, body, editable }) {
-  // Idempotent: clear any prior injection before re-adding.
-  nav.querySelector(`a[data-tab="${TAB.classFeatures}"]`)?.remove();
-  body.querySelector(`.tab[data-tab="${TAB.classFeatures}"]`)?.remove();
-
-  addNavTab(nav, TAB.classFeatures, game.i18n.localize("PF1EL.Tab.ClassFeatures"));
-
-  const content = await renderTpl(TEMPLATES.classFeatures, {
-    tabId: TAB.classFeatures,
-    help: game.i18n.localize("PF1EL.Help.ClassFeatures"),
-    editable,
-    items: await resolveEntries(getClassFeatures(item)),
+/**
+ * Keep the active links sub-tab across the re-renders our own edits trigger.
+ *
+ * The system binds its links tabs during render, before this hook injects our
+ * panels — so on a change (which re-renders the whole sheet) it re-activates
+ * with our tab still absent and drops the view back to the first tab (charges).
+ * We record the last-clicked links tab on the app and, once our panels are in
+ * the DOM, re-activate it through the system's own Tabs instance.
+ */
+function restoreLinksTab(app, nav) {
+  nav.addEventListener("click", (ev) => {
+    const a = ev.target.closest("a[data-tab][data-group='links']");
+    if (a) app._elLinksActive = a.dataset.tab;
   });
 
-  const panel = htmlToElement(content);
-  body.appendChild(panel);
-  wireTab({ item, panel, editable, kind: "classFeatures" });
+  if (app._elLinksActive) {
+    const linksTabs = app._tabs?.find((t) => t.group === "links");
+    linksTabs?.activate(app._elLinksActive);
+  }
 }
 
-async function injectSpellSupplementsTab({ item, nav, body, editable }) {
-  nav.querySelector(`a[data-tab="${TAB.spellSupplements}"]`)?.remove();
-  body.querySelector(`.tab[data-tab="${TAB.spellSupplements}"]`)?.remove();
-
-  addNavTab(nav, TAB.spellSupplements, game.i18n.localize("PF1EL.Tab.SpellSupplements"));
+/** Build the template context for a tab. */
+async function buildContext(item, editable, kind) {
+  if (kind === "classFeatures") {
+    return {
+      tabId: TAB.classFeatures,
+      help: game.i18n.localize("PF1EL.Help.ClassFeatures"),
+      editable,
+      items: await resolveEntries(getClassFeatures(item)),
+      ...(await resolveArchetype(item)),
+    };
+  }
 
   const cfg = getSpellSupplements(item);
   const canClass = canClassAssociate(item);
   // Class Spellcasting is only selectable where the item can be class-tied;
   // otherwise fall back to displaying spell-like regardless of the stored value.
   const effectiveMode = canClass ? cfg.mode : MODE.spelllike;
-  const content = await renderTpl(TEMPLATES.spellSupplements, {
+  return {
     tabId: TAB.spellSupplements,
     help: game.i18n.localize("PF1EL.Help.SpellSupplements"),
     editable,
@@ -233,38 +323,76 @@ async function injectSpellSupplementsTab({ item, nav, body, editable }) {
     isClassMode: effectiveMode === MODE.class,
     isSpelllikeMode: effectiveMode === MODE.spelllike,
     items: await resolveEntries(cfg.items),
-  });
+  };
+}
 
-  const panel = htmlToElement(content);
+/** Inject a fresh tab (nav entry + panel) into the links section. */
+async function injectTab({ item, nav, body, editable, kind }) {
+  const meta = TAB_META[kind];
+  // Idempotent: clear any prior injection before re-adding.
+  nav.querySelector(`a[data-tab="${meta.id}"]`)?.remove();
+  body.querySelector(`.tab[data-tab="${meta.id}"]`)?.remove();
+
+  addNavTab(nav, meta.id, game.i18n.localize(meta.label));
+
+  const panel = htmlToElement(await renderTpl(meta.template, await buildContext(item, editable, kind)));
   body.appendChild(panel);
-  wireTab({ item, panel, editable, kind: "spellSupplements" });
+
+  if (editable) wirePanelDrop(panel, { item, kind });
+  wireControls(panel, { item, editable, kind });
+}
+
+/**
+ * Re-render a tab's contents in place, without re-rendering the whole sheet. The
+ * panel element (and its drop listeners) is kept; only its inner content and the
+ * inner control listeners are rebuilt.
+ */
+async function refreshTab(panel, { item, editable, kind }) {
+  const meta = TAB_META[kind];
+  const fresh = htmlToElement(await renderTpl(meta.template, await buildContext(item, editable, kind)));
+  panel.replaceChildren(...fresh.childNodes);
+  wireControls(panel, { item, editable, kind });
 }
 
 // ─── Event wiring ───────────────────────────────────────────────────────────────
 
-function wireTab({ item, panel, editable, kind }) {
-  if (editable) {
-    // Intercept drops before the system's own link-drop handler (which is bound
-    // higher up and would try to createItemLink() with our unknown tab id).
-    panel.addEventListener("dragover", (ev) => ev.preventDefault(), true);
-    panel.addEventListener(
-      "drop",
-      async (ev) => {
-        ev.preventDefault();
-        ev.stopImmediatePropagation();
-        await onDrop({ item, kind, event: ev });
-      },
-      true
-    );
-  }
+/** Drop handling, bound once to the panel (survives in-place refreshes). */
+function wirePanelDrop(panel, { item, kind }) {
+  // Intercept drops before the system's own link-drop handler (which is bound
+  // higher up and would try to createItemLink() with our unknown tab id).
+  panel.addEventListener("dragover", (ev) => ev.preventDefault(), true);
+  panel.addEventListener(
+    "drop",
+    async (ev) => {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      // A drop on the base-class picker sets the archetype's base class;
+      // anything else adds a link entry to the current tab.
+      const changed =
+        kind === "classFeatures" && ev.target.closest(".el-baseclass-drop")
+          ? await onBaseClassDrop({ item, event: ev })
+          : await onDrop({ item, kind, event: ev });
+      if (changed) await refreshTab(panel, { item, editable: true, kind });
+    },
+    true
+  );
+}
+
+/** Inner control handlers, re-bound after each in-place refresh. */
+function wireControls(panel, ctx) {
+  const { item, kind } = ctx;
+  const refresh = () => refreshTab(panel, ctx);
 
   panel.querySelectorAll("a.delete-link").forEach((a) =>
     a.addEventListener("click", async (ev) => {
       ev.preventDefault();
       await removeEntry({ item, kind, index: Number(ev.currentTarget.dataset.index) });
+      await refresh(); // a row was removed — structure changed
     })
   );
 
+  // Level edits don't change structure and the input already shows the value, so
+  // we persist without refreshing (which would steal focus mid-edit).
   panel.querySelectorAll("input.el-level").forEach((input) =>
     input.addEventListener("change", async (ev) => {
       const index = Number(ev.currentTarget.dataset.index);
@@ -283,36 +411,93 @@ function wireTab({ item, panel, editable, kind }) {
       const cfg = getSpellSupplements(item);
       cfg.gated = ev.currentTarget.checked;
       await setSpellSupplements(item, cfg);
+      await refresh(); // toggles the level column
     });
+  }
+
+  if (kind === "classFeatures") {
+    panel.querySelector("input.el-replaces")?.addEventListener("change", async (ev) => {
+      const arch = getArchetype(item);
+      arch.replaces = ev.currentTarget.checked;
+      // Pre-fill the base class from the feat's own class association if none is
+      // set yet. Still clearable and replaceable via drag-and-drop.
+      if (arch.replaces && !arch.baseClass) {
+        const derived = deriveBaseClassUuid(item);
+        if (derived) arch.baseClass = derived;
+      }
+      await setArchetype(item, arch);
+      await refresh(); // reveals/hides the archetype body
+    });
+    panel.querySelector("a.el-baseclass-clear")?.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      const arch = getArchetype(item);
+      arch.baseClass = null;
+      arch.excluded = [];
+      await setArchetype(item, arch);
+      await refresh(); // back to the drop prompt
+    });
+    // Exclusion checkboxes don't change structure — the box already reflects the
+    // new state — so persist without a refresh.
+    panel.querySelectorAll("input.el-exclude").forEach((chk) =>
+      chk.addEventListener("change", async (ev) => {
+        const uuid = ev.currentTarget.dataset.uuid;
+        const arch = getArchetype(item);
+        const set = new Set(arch.excluded);
+        if (ev.currentTarget.checked) set.add(uuid);
+        else set.delete(uuid);
+        arch.excluded = [...set];
+        await setArchetype(item, arch);
+      })
+    );
   }
 }
 
+/** @returns {Promise<boolean>} Whether the base class was set. */
+async function onBaseClassDrop({ item, event }) {
+  const data = getDropData(event);
+  if (!data || data.type !== "Item" || !data.uuid) return false;
+
+  const doc = await fromUuid(data.uuid).catch(() => null);
+  if (!doc || doc.type !== "class") {
+    ui.notifications.warn(game.i18n.localize("PF1EL.Warning.ClassOnly"));
+    return false;
+  }
+
+  const arch = getArchetype(item);
+  arch.baseClass = data.uuid;
+  arch.excluded = []; // reset — exclusions are specific to the chosen base class
+  await setArchetype(item, arch);
+  return true;
+}
+
+/** @returns {Promise<boolean>} Whether an entry was added. */
 async function onDrop({ item, kind, event }) {
   const data = getDropData(event);
-  if (!data || data.type !== "Item" || !data.uuid) return;
+  if (!data || data.type !== "Item" || !data.uuid) return false;
 
   const doc = await fromUuid(data.uuid).catch(() => null);
   if (!doc) {
     ui.notifications.warn(game.i18n.localize("PF1EL.Warning.BadDrop"));
-    return;
+    return false;
   }
-  if (doc.uuid === item.uuid) return; // No self-links.
+  if (doc.uuid === item.uuid) return false; // No self-links.
 
   if (kind === "classFeatures") {
     const list = getClassFeatures(item);
-    if (list.some((e) => e.uuid === data.uuid)) return; // No duplicates.
+    if (list.some((e) => e.uuid === data.uuid)) return false; // No duplicates.
     list.push({ uuid: data.uuid, level: 1 });
     await setClassFeatures(item, list);
   } else {
     if (doc.type !== "spell") {
       ui.notifications.warn(game.i18n.localize("PF1EL.Warning.SpellOnly"));
-      return;
+      return false;
     }
     const cfg = getSpellSupplements(item);
-    if (cfg.items.some((e) => e.uuid === data.uuid)) return;
+    if (cfg.items.some((e) => e.uuid === data.uuid)) return false;
     cfg.items.push({ uuid: data.uuid, level: 1 });
     await setSpellSupplements(item, cfg);
   }
+  return true;
 }
 
 async function removeEntry({ item, kind, index }) {

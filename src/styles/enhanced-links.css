@@ -54,3 +54,40 @@
   width: 3.5em;
   text-align: center;
 }
+
+/* Archetype ("replaces class features") section */
+.enhanced-links-tab .el-archetype {
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--pf1-border-color, rgba(0, 0, 0, 0.15));
+}
+
+.enhanced-links-tab .el-archetype-body {
+  margin-top: 0.5rem;
+  padding-left: 0.4rem;
+}
+
+.enhanced-links-tab .el-baseclass {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.enhanced-links-tab .el-baseclass-drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  border: 1px dashed var(--pf1-border-color, rgba(0, 0, 0, 0.35));
+  border-radius: 4px;
+  color: var(--color-text-dark-secondary, #4b4a44);
+  font-style: italic;
+  text-align: center;
+}
+
+.enhanced-links-tab table.el-exclusions .controls {
+  width: 4.5em;
+  text-align: center;
+}

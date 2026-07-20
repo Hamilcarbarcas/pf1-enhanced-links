@@ -17,3 +17,8 @@
   when their gate drops or their parent is removed, and route spells into the
   associated class's book or the spell-like abilities book (enabling the latter if
   it isn't already). Runs on the primary GM client.
+- **Archetype support** on the Class Features tab: a "Replaces class features"
+  option lets a class feature pick a base class and check which of its class
+  associations to replace. Replaced features are blocked from being granted on
+  level-up (flash-free with lib-wrapper) and removed if already present. Combined
+  with the tab's own grants, this expresses an archetype end-to-end.

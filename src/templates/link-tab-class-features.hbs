@@ -31,4 +31,54 @@
     </tr>
     {{/each}}
   </table>
+
+  <div class="el-archetype">
+    <label class="el-control el-checkbox">
+      <input type="checkbox" class="el-replaces" {{#if replaces}}checked{{/if}}
+        {{#unless editable}}disabled{{/unless}}>
+      <span>{{localize "PF1EL.Archetype.Replaces"}}</span>
+    </label>
+
+    {{#if replaces}}
+    <div class="el-archetype-body">
+      {{#if hasBaseClass}}
+      <div class="el-baseclass">
+        <span>{{localize "PF1EL.Archetype.BaseClass"}}: <strong>{{baseClassName}}</strong></span>
+        {{#if editable}}
+        <a class="el-baseclass-clear link-control" data-tooltip="PF1EL.Archetype.Clear">
+          <i class="fa-solid fa-xmark"></i>
+        </a>
+        {{/if}}
+      </div>
+
+      <table class="item-links el-exclusions">
+        <tr>
+          <th class="controls">{{localize "PF1EL.Archetype.Exclude"}}</th>
+          <th>{{localize "PF1.Item"}}</th>
+          <th class="extra-field">{{localize "PF1EL.Field.Level"}}</th>
+        </tr>
+        {{#each associations}}
+        <tr class="links-item{{#if broken}} broken-link{{/if}}">
+          <td class="controls">
+            <input type="checkbox" class="el-exclude" data-uuid="{{uuid}}" {{#if excluded}}checked{{/if}}
+              {{#unless @root.editable}}disabled{{/unless}}>
+          </td>
+          <td class="item-name">
+            <img src="{{img}}" width="24" height="24">
+            <span class="name">
+              {{name}}{{#if broken}} <i class="fa-solid fa-link-slash" data-tooltip="PF1.Missing"></i>{{/if}}
+            </span>
+          </td>
+          <td class="extra-field">{{level}}</td>
+        </tr>
+        {{/each}}
+      </table>
+      {{else}}
+      <div class="el-baseclass-drop">
+        <i class="fa-solid fa-hand-pointer"></i> {{localize "PF1EL.Archetype.DropClass"}}
+      </div>
+      {{/if}}
+    </div>
+    {{/if}}
+  </div>
 </div>
