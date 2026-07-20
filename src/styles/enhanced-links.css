@@ -1,0 +1,56 @@
+/* PF1 Enhanced Links — injected link sub-tabs.
+ * Scoped under .enhanced-links-tab so nothing here can leak onto the system's
+ * own link tabs, which share the surrounding markup. */
+
+.enhanced-links-tab .el-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin: 0.35rem 0 0.6rem;
+  padding: 0.45rem 0.6rem;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--pf1-border-color, rgba(0, 0, 0, 0.1));
+  border-radius: 4px;
+}
+
+.enhanced-links-tab .el-control {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.enhanced-links-tab .el-control > span {
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.enhanced-links-tab .el-control select {
+  min-width: 12em;
+}
+
+.enhanced-links-tab .el-checkbox {
+  cursor: pointer;
+}
+
+.enhanced-links-tab .el-checkbox input {
+  margin: 0;
+}
+
+.enhanced-links-tab .el-warning {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.35rem 0;
+  font-size: 0.9em;
+  color: var(--color-level-warning, #a5670b);
+}
+
+.enhanced-links-tab table.item-links .extra-field {
+  text-align: center;
+}
+
+.enhanced-links-tab input.el-level {
+  width: 3.5em;
+  text-align: center;
+}

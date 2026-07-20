@@ -1,0 +1,61 @@
+<div class="tab enhanced-links-tab" data-group="links" data-tab="{{tabId}}">
+  <div class="help-text">
+    <i class="help-icon fa-solid fa-info-circle"></i> {{help}}
+  </div>
+
+  <div class="el-controls">
+    <label class="el-control">
+      <span>{{localize "PF1EL.Mode.Label"}}</span>
+      <select class="el-mode" {{#unless editable}}disabled{{/unless}}>
+        <option value="class" {{selected isClassMode}} {{#unless canClass}}disabled{{/unless}}>
+          {{localize "PF1EL.Mode.Class"}}
+        </option>
+        <option value="spelllike" {{selected isSpelllikeMode}}>
+          {{localize "PF1EL.Mode.Spelllike"}}
+        </option>
+      </select>
+    </label>
+
+    <label class="el-control el-checkbox">
+      <input type="checkbox" class="el-gated" {{checked gated}} {{#unless editable}}disabled{{/unless}}>
+      <span>{{localize "PF1EL.Gating.Label"}}</span>
+    </label>
+  </div>
+
+  {{#unless canClass}}
+  <div class="el-warning">
+    <i class="fa-solid fa-triangle-exclamation"></i> {{localize "PF1EL.Warning.NoClassSpell"}}
+  </div>
+  {{/unless}}
+
+  <table class="item-links">
+    <tr>
+      <th>{{localize "PF1.Item"}}</th>
+      {{#if gated}}<th class="extra-field">{{localize "PF1EL.Field.Level"}}</th>{{/if}}
+      <th class="controls"></th>
+    </tr>
+    {{#each items}}
+    <tr class="links-item{{#if broken}} broken-link{{/if}}" data-uuid="{{uuid}}" data-index="{{index}}">
+      <td class="item-name">
+        <img src="{{img}}" width="24" height="24">
+        <span class="name">
+          {{name}}{{#if broken}} <i class="fa-solid fa-link-slash" data-tooltip="PF1.Missing"></i>{{/if}}
+        </span>
+      </td>
+      {{#if @root.gated}}
+      <td class="extra-field">
+        <input class="el-level" type="number" min="0" step="1" value="{{level}}" data-index="{{index}}"
+          {{#unless @root.editable}}disabled{{/unless}}>
+      </td>
+      {{/if}}
+      <td class="controls">
+        {{#if @root.editable}}
+        <a class="link-control delete-link" data-index="{{index}}" data-tooltip="PF1.DeleteItem">
+          <i class="fa-solid fa-trash"></i>
+        </a>
+        {{/if}}
+      </td>
+    </tr>
+    {{/each}}
+  </table>
+</div>

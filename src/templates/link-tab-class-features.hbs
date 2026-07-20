@@ -1,0 +1,34 @@
+<div class="tab enhanced-links-tab" data-group="links" data-tab="{{tabId}}">
+  <div class="help-text">
+    <i class="help-icon fa-solid fa-info-circle"></i> {{help}}
+  </div>
+
+  <table class="item-links">
+    <tr>
+      <th>{{localize "PF1.Item"}}</th>
+      <th class="extra-field">{{localize "PF1EL.Field.Level"}}</th>
+      <th class="controls"></th>
+    </tr>
+    {{#each items}}
+    <tr class="links-item{{#if broken}} broken-link{{/if}}" data-uuid="{{uuid}}" data-index="{{index}}">
+      <td class="item-name">
+        <img src="{{img}}" width="24" height="24">
+        <span class="name">
+          {{name}}{{#if broken}} <i class="fa-solid fa-link-slash" data-tooltip="PF1.Missing"></i>{{/if}}
+        </span>
+      </td>
+      <td class="extra-field">
+        <input class="el-level" type="number" min="0" step="1" value="{{level}}" data-index="{{index}}"
+          {{#unless @root.editable}}disabled{{/unless}}>
+      </td>
+      <td class="controls">
+        {{#if @root.editable}}
+        <a class="link-control delete-link" data-index="{{index}}" data-tooltip="PF1.DeleteItem">
+          <i class="fa-solid fa-trash"></i>
+        </a>
+        {{/if}}
+      </td>
+    </tr>
+    {{/each}}
+  </table>
+</div>
