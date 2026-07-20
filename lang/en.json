@@ -4,6 +4,8 @@
   "PF1EL.Help.ClassFeatures": "Grant these items as children when this item's associated class reaches the listed level.",
   "PF1EL.Help.SpellSupplements": "Route these spells into a spellbook. Choose the destination and, optionally, gate each spell behind a class level or Hit Dice total.",
   "PF1EL.Field.Level": "Level",
+  "PF1EL.Field.PerDay": "Times/day",
+  "PF1EL.PerDayHint": "Uses per day for this spell-like ability. 0 = at will.",
   "PF1EL.Mode.Label": "Destination",
   "PF1EL.Mode.Class": "Class Spellcasting",
   "PF1EL.Mode.Spelllike": "Spell-like Abilities",

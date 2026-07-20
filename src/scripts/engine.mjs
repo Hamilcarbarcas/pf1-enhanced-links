@@ -103,7 +103,7 @@ async function buildClassFeature(uuid, tag, parentId) {
   return data;
 }
 
-async function buildSpell(uuid, bookId, tag, mode, parentId) {
+async function buildSpell(uuid, bookId, tag, mode, parentId, perDay = 0) {
   const built = await buildFromSource(uuid);
   if (!built) return null;
   const { source, data } = built;
@@ -120,6 +120,31 @@ async function buildSpell(uuid, bookId, tag, mode, parentId) {
     if (Number.isFinite(learned)) level = Math.clamp(learned, 0, 9);
   }
   foundry.utils.setProperty(data, "system.level", level);
+
+  // Spell-like uses per day: a positive count sets prepared uses; 0 means at-will.
+  if (mode === MODE.spelllike) {
+    const n = Math.max(0, Math.floor(Number(perDay) || 0));
+    if (n > 0) {
+      foundry.utils.setProperty(data, "system.atWill", false);
+      foundry.utils.setProperty(data, "system.preparation.max", n);
+      foundry.utils.setProperty(data, "system.preparation.value", n);
+    } else {
+      foundry.utils.setProperty(data, "system.atWill", true);
+    }
+
+    // Spell-like abilities have no components — clear them all.
+    foundry.utils.setProperty(data, "system.components", {
+      value: "",
+      verbal: false,
+      somatic: false,
+      thought: false,
+      emotion: false,
+      material: false,
+      focus: false,
+      divineFocus: 0,
+    });
+    foundry.utils.setProperty(data, "system.materials", { value: "", focus: "", gpValue: 0 });
+  }
 
   stampGrant(data, uuid, parentId);
   return data;
@@ -165,7 +190,7 @@ function buildDesired(actor, parent) {
   // Feature 2 — spell supplements. Ungated ⇒ threshold 0 (always met once a book
   // resolves), which is how the same engine serves both gated and ungated.
   const cfg = getSpellSupplements(parent);
-  for (const { uuid, level } of cfg.items) {
+  for (const { uuid, level, perDay } of cfg.items) {
     const threshold = cfg.gated ? (Number.isFinite(level) ? level : 1) : 0;
     let gateQty;
     let bookId;
@@ -184,7 +209,7 @@ function buildDesired(actor, parent) {
       kind: "spell",
       met: bookId != null && gateQty >= threshold,
       needsSpelllikeBook,
-      build: () => buildSpell(uuid, bookId, tag, cfg.mode, parent.id),
+      build: () => buildSpell(uuid, bookId, tag, cfg.mode, parent.id, perDay),
     });
   }
 

@@ -182,6 +182,7 @@ async function resolveEntries(list) {
     rows.push({
       uuid: entry.uuid,
       level: Number.isFinite(entry.level) ? entry.level : 1,
+      perDay: Number.isFinite(entry.perDay) ? entry.perDay : 0, // 0 = at will (spell-like only)
       index,
       name: doc?.name ?? entry.uuid,
       img: doc?.img ?? "icons/svg/item-bag.svg",
@@ -413,6 +414,17 @@ function wireControls(panel, ctx) {
       await setSpellSupplements(item, cfg);
       await refresh(); // toggles the level column
     });
+    // Times/day edits don't change structure — persist without refreshing.
+    panel.querySelectorAll("input.el-perday").forEach((input) =>
+      input.addEventListener("change", async (ev) => {
+        const index = Number(ev.currentTarget.dataset.index);
+        const perDay = Math.max(0, Math.floor(Number(ev.currentTarget.value) || 0));
+        const cfg = getSpellSupplements(item);
+        if (!cfg.items[index]) return;
+        cfg.items[index].perDay = perDay;
+        await setSpellSupplements(item, cfg);
+      })
+    );
   }
 
   if (kind === "classFeatures") {
@@ -494,7 +506,7 @@ async function onDrop({ item, kind, event }) {
     }
     const cfg = getSpellSupplements(item);
     if (cfg.items.some((e) => e.uuid === data.uuid)) return false;
-    cfg.items.push({ uuid: data.uuid, level: 1 });
+    cfg.items.push({ uuid: data.uuid, level: 1, perDay: 0 });
     await setSpellSupplements(item, cfg);
   }
   return true;

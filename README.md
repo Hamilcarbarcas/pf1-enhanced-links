@@ -40,6 +40,9 @@ spell appears once the gate is met — the associated class's level (Class
 Spellcasting) or the actor's Hit Dice (Spell-like Abilities). When disabled, the
 spells are present whenever the item is on the actor.
 
+In **Spell-like Abilities** mode each spell also gets a **Times/day** value that
+sets its uses per day on the actor (0 = at-will).
+
 ## Where each tab shows up
 
 | Tab | Requires an associated class? | Appears on |

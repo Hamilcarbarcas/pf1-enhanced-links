@@ -32,6 +32,7 @@
     <tr>
       <th>{{localize "PF1.Item"}}</th>
       {{#if gated}}<th class="extra-field">{{localize "PF1EL.Field.Level"}}</th>{{/if}}
+      {{#if isSpelllikeMode}}<th class="extra-field">{{localize "PF1EL.Field.PerDay"}}</th>{{/if}}
       <th class="controls"></th>
     </tr>
     {{#each items}}
@@ -46,6 +47,12 @@
       <td class="extra-field">
         <input class="el-level" type="number" min="0" step="1" value="{{level}}" data-index="{{index}}"
           {{#unless @root.editable}}disabled{{/unless}}>
+      </td>
+      {{/if}}
+      {{#if @root.isSpelllikeMode}}
+      <td class="extra-field">
+        <input class="el-perday" type="number" min="0" step="1" value="{{perDay}}" data-index="{{index}}"
+          data-tooltip="PF1EL.PerDayHint" {{#unless @root.editable}}disabled{{/unless}}>
       </td>
       {{/if}}
       <td class="controls">

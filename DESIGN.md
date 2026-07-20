@@ -122,7 +122,12 @@ with their book *pre-assigned*.
 ### Book routing
 - `mode:"class"` → target the actor book where `book.class === <parent's class
   tag>`; set the spell's `system.spellbook = bookId`.
-- `mode:"spelllike"` → `system.spellbook = "spelllike"`.
+- `mode:"spelllike"` → `system.spellbook = "spelllike"`, plus a per-spell
+  **Times/day**: `perDay > 0` sets `system.preparation.max`/`value` and clears
+  `atWill`; `perDay === 0` sets `atWill`. Note the default spell-like book is
+  spontaneous, where uses come from a per-level pool — so per-SLA `preparation`
+  displays the count but only deducts per-spell in a prepared-style book. The
+  engine sets the field and leaves the book's mode to the user.
 
 > **SLA book must be live, or the spell lands inert.** A spell routed to
 > `spelllike` computes no CL/uses unless that book is `inUse` with an `_hd`

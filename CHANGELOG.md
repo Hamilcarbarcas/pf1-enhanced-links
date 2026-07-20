@@ -17,6 +17,10 @@
   when their gate drops or their parent is removed, and route spells into the
   associated class's book or the spell-like abilities book (enabling the latter if
   it isn't already). Runs on the primary GM client.
+- **Times/day** on spell-like spell supplements: a per-spell uses-per-day field
+  (shown in Spell-like Abilities mode) that stamps the created spell's prepared
+  uses; 0 means at-will. Spells routed to spell-like also have their components
+  cleared, since spell-like abilities have none.
 - **Archetype support** on the Class Features tab: a "Replaces class features"
   option lets a class feature pick a base class and check which of its class
   associations to replace. Replaced features are blocked from being granted on
