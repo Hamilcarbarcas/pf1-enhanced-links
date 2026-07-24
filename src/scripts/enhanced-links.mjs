@@ -407,6 +407,7 @@ function wireControls(panel, ctx) {
       const cfg = getSpellSupplements(item);
       cfg.mode = ev.currentTarget.value === MODE.spelllike ? MODE.spelllike : MODE.class;
       await setSpellSupplements(item, cfg);
+      await refresh(); // toggles the times/day column
     });
     panel.querySelector("input.el-gated")?.addEventListener("change", async (ev) => {
       const cfg = getSpellSupplements(item);
