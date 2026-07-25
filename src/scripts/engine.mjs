@@ -159,8 +159,11 @@ async function ensureSpelllikeBook(actor) {
   const book = actor.system?.attributes?.spells?.spellbooks?.spelllike ?? {};
   const update = {};
   if (!book.inUse) update[`${base}.inUse`] = true;
+  // class "_hd" already drives caster level off Hit Dice (see the system's
+  // actor-pf prepareSpellbook: the _hd branch adds HD to cl.total). Do NOT also
+  // set a cl.formula of "@attributes.hd.total" — that adds HD a second time and
+  // doubles the caster level.
   if (!book.class) update[`${base}.class`] = "_hd"; // HD-driven, like innate casting
-  if (!book.cl?.formula) update[`${base}.cl.formula`] = "@attributes.hd.total";
   if (Object.keys(update).length) await actor.update(update, { render: false });
 }
 
@@ -260,6 +263,11 @@ async function enforceArchetypes(actor) {
 
   const toDelete = actor.items
     .filter((it) => {
+      // Never delete our own grants — they're owned by reconcileParent's ledger.
+      // A replacement feature (e.g. duplicated from the base it supersedes) can
+      // share the base's compendiumSource, so without this guard enforcement and
+      // the grant would fight each other every pass (create → delete → recreate).
+      if (it.getFlag(MODULE_ID, GRANT_PARENT)) return false;
       const src = it._stats?.compendiumSource;
       return src && excluded.has(uniformUuid(src));
     })
@@ -282,10 +290,21 @@ function isConfiguredParent(item) {
   return arch?.replaces === true && Array.isArray(arch?.excluded) && arch.excluded.length > 0;
 }
 
+/** The tail id of a link's (possibly relative) target uuid, e.g. ".Item.abc" → "abc". */
+function linkTargetId(link) {
+  return typeof link?.uuid === "string" ? link.uuid.split(".").pop() : null;
+}
+
 /**
  * Bring a single parent's grants in line with its desired set: delete grants that
  * are no longer met (or whose source was removed), create grants newly met.
  * Returns true if anything changed.
+ *
+ * Every grant is also linked as the parent's `children` (mirroring the system's own
+ * child links) so it groups under the parent on the sheet and the system's delete
+ * cascade owns teardown on parent deletion. The child-link list is lazily
+ * materialized and only OUR entries are added/removed, so hand-authored children on
+ * the parent are preserved.
  */
 async function reconcileParent(actor, parent) {
   const ledger = foundry.utils.deepClone(parent.getFlag(MODULE_ID, GRANTED) ?? {});
@@ -294,20 +313,28 @@ async function reconcileParent(actor, parent) {
 
   let changed = false;
 
+  // Child links are only touched when a class-feature grant is added or removed.
+  let childLinks = null; // null until first mutation; then the array we write back
+  const editChildLinks = () => (childLinks ??= foundry.utils.deepClone(parent.toObject().system?.links?.children ?? []));
+
   // Teardown: ledger entries no longer wanted, or whose item was removed by hand.
   const toDelete = [];
   for (const [itemId, rec] of Object.entries(ledger)) {
-    if (!actor.items.get(itemId)) {
+    const stillPresent = actor.items.get(itemId);
+    if (!stillPresent) {
       delete ledger[itemId];
       changed = true;
-      continue;
-    }
-    const d = bySource.get(rec.source);
-    if (!d || !d.met) {
+    } else {
+      const d = bySource.get(rec.source);
+      if (d && d.met) continue;
       toDelete.push(itemId);
       delete ledger[itemId];
       changed = true;
     }
+    // Drop our child link to this now-gone grant (stale or intentionally removed).
+    const links = editChildLinks();
+    const linkIdx = links.findIndex((l) => linkTargetId(l) === itemId);
+    if (linkIdx >= 0) links.splice(linkIdx, 1);
   }
   if (toDelete.length) await actor.deleteEmbeddedDocuments("Item", toDelete, { render: false });
 
@@ -330,12 +357,20 @@ async function reconcileParent(actor, parent) {
       const created = await actor.createEmbeddedDocuments("Item", data, { render: false });
       for (let i = 0; i < created.length; i++) {
         ledger[created[i].id] = { source: meta[i].source, threshold: meta[i].threshold, kind: meta[i].kind };
+        // Link every grant as a child of the parent (actor-relative uuid, name
+        // omitted — same shape the system writes for a "children" link) so the
+        // system's delete cascade owns teardown on parent removal.
+        editChildLinks().push({ uuid: created[i].getRelativeUUID(actor) });
       }
       changed = true;
     }
   }
 
-  if (changed) await parent.update({ [`flags.${MODULE_ID}.${GRANTED}`]: ledger }, { render: false });
+  if (changed) {
+    const update = { [`flags.${MODULE_ID}.${GRANTED}`]: ledger };
+    if (childLinks !== null) update["system.links.children"] = childLinks;
+    await parent.update(update, { render: false });
+  }
   return changed;
 }
 
@@ -348,13 +383,18 @@ async function reconcileActor(actor) {
   if (busy.has(actor.id)) return;
 
   busy.add(actor.id);
+  let dirty = false;
   try {
     for (let pass = 0; pass < MAX_PASSES; pass++) {
       let changed = false;
+      // Remove archetype-excluded base features first, so a replacement grant is
+      // never created while the base it supersedes is still on the actor — that
+      // overlap is what trips the system's duplicate-identifier check during prep.
+      if (await enforceArchetypes(actor)) changed = true;
       for (const parent of actor.items.filter(isConfiguredParent)) {
         if (await reconcileParent(actor, parent)) changed = true;
       }
-      if (await enforceArchetypes(actor)) changed = true;
+      if (changed) dirty = true;
       if (!changed) return;
       if (pass === MAX_PASSES - 1) {
         console.warn(LOG, "reconcile hit the pass cap on", actor.name, "— check for a link cycle.");
@@ -364,26 +404,58 @@ async function reconcileActor(actor) {
     console.error(LOG, "reconcile failed for", actor?.name, err);
   } finally {
     busy.delete(actor.id);
+    // All engine CRUD runs render:false to avoid flashing mid-churn; re-render the
+    // actor's open sheets once at the end so grants appear without a reopen.
+    if (dirty) actor.render(false);
   }
 }
 
-/** Transitive set of grants descending from a (being-deleted) parent id. */
-function collectGrantDescendants(actor, rootId) {
-  const doomed = new Set();
-  let frontier = [rootId];
-  while (frontier.length) {
-    const next = [];
-    for (const pid of frontier) {
-      for (const it of actor.items) {
-        if (it.getFlag(MODULE_ID, GRANT_PARENT) === pid && !doomed.has(it.id)) {
-          doomed.add(it.id);
-          next.push(it.id);
-        }
-      }
-    }
-    frontier = next;
+/**
+ * Re-create the base-class features a just-removed archetype was suppressing.
+ * Called from the delete hook, where the archetype item is already off the actor —
+ * so its own exclusions no longer count. A base feature returns only if (a) its
+ * class is still on the actor, (b) no OTHER active archetype still replaces it,
+ * (c) the class level meets the association's level (higher ones return on the next
+ * normal level-up), and (d) it isn't somehow already present. Restored features are
+ * plain class associations — no engine flags — so they behave exactly like the ones
+ * the system grants on level-up, and a future archetype can exclude them again.
+ */
+async function restoreReplacedFeatures(actor, item) {
+  const arch = getArchetype(item);
+  if (!arch.replaces || !arch.excluded.length) return;
+
+  const tag = getAssociatedClass(item);
+  const clsId = tag ? actor.classes?.[tag]?._id : null;
+  const cls = clsId ? actor.items.get(clsId) : null;
+  if (!cls) return; // class gone — nothing to restore onto
+
+  const clvl = classLevel(actor, tag);
+  const stillExcluded = collectExcludedForClass(actor, tag); // other active archetypes
+  const assoc = new Map((cls.system?.links?.classAssociations ?? []).map((a) => [uniformUuid(a.uuid), a]));
+
+  const data = [];
+  for (const rawUuid of arch.excluded) {
+    const u = uniformUuid(rawUuid);
+    if (stillExcluded.has(u)) continue; // still replaced by another archetype
+    const a = assoc.get(u);
+    if (!a) continue; // not a current association of this class (config drift)
+    const level = Number.isFinite(a.level) ? a.level : 1;
+    if (clvl < level) continue; // not yet earned; level-up will grant it
+    if (actor.items.some((it) => uniformUuid(it._stats?.compendiumSource) === u)) continue; // already present
+    const built = await buildFromSource(a.uuid);
+    if (!built) continue;
+    foundry.utils.setProperty(built.data, "system.class", tag);
+    data.push(built.data);
   }
-  return [...doomed];
+
+  if (!data.length) return;
+  busy.add(actor.id);
+  try {
+    await actor.createEmbeddedDocuments("Item", data, { render: false });
+  } finally {
+    busy.delete(actor.id);
+  }
+  actor.render(false);
 }
 
 // ─── Triggers ───────────────────────────────────────────────────────────────────
@@ -445,24 +517,21 @@ Hooks.on("updateItem", (item, changed) => {
   if (foundry.utils.hasProperty(changed, `flags.${MODULE_ID}`)) reconcileActor(actor);
 });
 
-// A parent was removed → tear down its (transitive) grants. A granted child was
-// removed by hand → re-heal via a reconcile.
+// An item was removed. An archetype restores what it replaced; a grant
+// hand-deleted while its parent survives re-heals. Parent-deletion teardown of
+// grants needs nothing here: every grant is child-linked, so the system's own
+// cascade (Actor#_onDeleteDescendantDocuments) removes them all with the parent.
 Hooks.on("deleteItem", async (item) => {
   const actor = item.actor;
   if (!(actor instanceof Actor) || !game.ready || !isPrimaryGM() || busy.has(actor.id)) return;
 
-  const orphans = collectGrantDescendants(actor, item.id);
-  if (orphans.length) {
-    busy.add(actor.id);
-    try {
-      await actor.deleteEmbeddedDocuments("Item", orphans, { render: false });
-    } finally {
-      busy.delete(actor.id);
-    }
-    return;
-  }
+  // Restore base features a removed archetype was suppressing.
+  await restoreReplacedFeatures(actor, item);
 
-  if (item.getFlag(MODULE_ID, GRANT_SOURCE)) reconcileActor(actor);
+  // A grant hand-deleted while its parent still lives → re-heal (the gate may still
+  // be met). If the parent is gone this was cascade teardown — nothing to do.
+  const parentId = item.getFlag(MODULE_ID, GRANT_PARENT);
+  if (parentId && actor.items.get(parentId)) reconcileActor(actor);
 });
 
 // Expose for console debugging alongside the Phase 1 accessors.

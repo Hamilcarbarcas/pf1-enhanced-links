@@ -17,6 +17,9 @@
   when their gate drops or their parent is removed, and route spells into the
   associated class's book or the spell-like abilities book (enabling the latter if
   it isn't already). Runs on the primary GM client.
+- Granted items (class features and spells alike) are child-linked to the parent
+  that produced them, so they group under it on the sheet and are removed together
+  with the parent by the system's own delete cascade.
 - **Times/day** on spell-like spell supplements: a per-spell uses-per-day field
   (shown in Spell-like Abilities mode) that stamps the created spell's prepared
   uses; 0 means at-will. Spells routed to spell-like also have their components
@@ -24,5 +27,7 @@
 - **Archetype support** on the Class Features tab: a "Replaces class features"
   option lets a class feature pick a base class and check which of its class
   associations to replace. Replaced features are blocked from being granted on
-  level-up (flash-free with lib-wrapper) and removed if already present. Combined
-  with the tab's own grants, this expresses an archetype end-to-end.
+  level-up (flash-free with lib-wrapper) and removed if already present. Deleting
+  the archetype restores the base features it had suppressed (those the character
+  has earned and that no other archetype still replaces). Combined with the tab's
+  own grants, this expresses an archetype end-to-end.

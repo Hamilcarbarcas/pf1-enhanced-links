@@ -169,9 +169,13 @@ class only exists to author the exclusion list.
   excluded association uuid. This covers archetypes added after the class already
   leveled.
 
-**On removal:** replaced features are *not* auto-restored — matching PF1, where
-class features only (re)appear on level-up. *(Deliberate; the removal question was
-settled this way.)*
+**On removal:** the base features the archetype suppressed are **restored** when
+the archetype item is deleted (`restoreReplacedFeatures`, from the delete hook). A
+base association returns only if its class is still present, no other active
+archetype still replaces it, and the class level meets the association's level
+(higher-level ones reappear on the next normal level-up). Restored items are plain
+class associations with no engine flags, so they're indistinguishable from
+system-granted features and can be excluded again by a future archetype.
 
 Scoping: only archetypes whose associated class is present on the actor enforce,
 and matching is by association source uuid, so unrelated items sharing a uuid are
@@ -228,15 +232,27 @@ templates** work, the original motivation.
    and the ensure-SLA-book step. *(done, via the engine)*
 
 ### Engine notes / deviations from the sketch
-- **No `system.links.children` writes.** Grants group naturally on the sheet via
-  `system.class` (features cluster under their class) and `system.spellbook`
-  (spells land in their book), so child-linking was dropped as redundant
-  bookkeeping. Teardown is driven by the `granted` ledger + `grantParent` stamp
-  instead, so the association is not lost.
+- **Every grant is child-linked to its parent.** Both class-feature and spell
+  grants are written into the parent's `system.links.children` (actor-relative
+  uuid, name omitted — the system's own "children" shape). Only the engine's own
+  links are added/removed (matched by the grant's item id), so hand-authored
+  children are preserved; teardown drops the link symmetrically. Lifecycle is still
+  driven by the `granted` ledger + `grantParent` stamp — the child link is
+  presentational plus the teardown hook (below), not the source of truth. Spells
+  still land in their book via `system.spellbook`; the child link is additional,
+  not a relocation.
+- **Parent-deletion teardown is the system's job.** Because every grant is
+  child-linked, the system's own cascade (`Actor#_onDeleteDescendantDocuments`)
+  deletes the whole grant subtree when the parent is removed — on the *triggering*
+  client, so it works even with no GM present. The engine's delete hook therefore
+  does **not** delete grants itself; doing so would race the system's cascade and
+  throw "item does not exist". The hook only restores archetype-replaced base
+  features and re-heals a hand-deleted grant whose parent still lives.
 - **Provenance is stamped on created items** (`flags[MODULE_ID].grantParent /
-  grantSource`) in addition to the parent ledger. The stamp drives transitive
-  cleanup on parent deletion; the ledger drives gate-down teardown; together they
-  let a reload reconcile without duplicating.
+  grantSource`) in addition to the parent ledger. The stamp drives grant teardown
+  and the "was this hand-deleted while its parent lives?" re-heal check; the ledger
+  drives gate-down teardown; together they let a reload reconcile without
+  duplicating.
 - **Primary-GM-only execution** (`game.users.activeGM.isSelf`) so grants aren't
   created once per connected client. Trade-off: if no GM is present when a player
   levels, grants apply the next time a GM is active and an event fires. *(Open:
