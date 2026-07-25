@@ -10,6 +10,8 @@
   "PF1EL.Mode.Class": "Class Spellcasting",
   "PF1EL.Mode.Spelllike": "Spell-like Abilities",
   "PF1EL.Gating.Label": "Level gating",
+  "PF1EL.Castable.Label": "Require castable level",
+  "PF1EL.Castable.Hint": "Also hold each spell back until the destination spellbook can cast that spell level. A partial caster then receives a spell later than a full caster does — or never, if its progression never reaches that level.",
   "PF1EL.Archetype.Replaces": "Replaces class features",
   "PF1EL.Archetype.BaseClass": "Base class",
   "PF1EL.Archetype.DropClass": "Drop the base class here to choose which features it replaces.",
@@ -18,5 +20,6 @@
   "PF1EL.Warning.ClassOnly": "Drop a class item here to pick the base class.",
   "PF1EL.Warning.SpellOnly": "Only spells can be added to Spell Supplements.",
   "PF1EL.Warning.BadDrop": "That item could not be resolved and was not added.",
+  "PF1EL.Warning.SourceMissing": "That link's source item could not be found.",
   "PF1EL.Warning.NoClassSpell": "This item type can't be tied to a class, so Class Spellcasting is unavailable — spells will route to Spell-like Abilities."
 }

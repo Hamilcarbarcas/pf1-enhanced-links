@@ -31,3 +31,20 @@
   the archetype restores the base features it had suppressed (those the character
   has earned and that no other archetype still replaces). Combined with the tab's
   own grants, this expresses an archetype end-to-end.
+- **Require castable level** on Spell Supplements (Class Spellcasting mode only,
+  **on by default**): a spell is also held back until the destination spellbook can
+  actually cast that spell level, so one feature can serve a full and a partial
+  caster. The partial caster receives each spell at whichever comes later — the
+  entry's level gate or its own casting progression — and never receives spells of a
+  level its progression doesn't reach. The check reads the book's caster type and
+  progression only, deliberately not the casting ability score, so ability damage
+  can't make granted spells flicker. Because the default is on, existing
+  Class Spellcasting configurations gain the check as well.
+- **Compendium link icon** on every row in both sub-tabs (and in the archetype
+  exclusion checklist), matching the system's own link sections: click the book to
+  open the linked item's sheet. Hidden on broken links, which have nothing to open.
+- **Auto-sort by level** for level-gated lists: Class Features, Spell Supplements
+  with level gating enabled, and the archetype exclusion checklist are ordered by
+  gate level (ties by name). Sorting is display-only — the stored link order is
+  untouched — and applies whenever the panel renders, so editing a level saves
+  immediately but doesn't move the row out from under the cursor mid-edit.

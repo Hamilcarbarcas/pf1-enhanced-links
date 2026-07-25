@@ -76,6 +76,73 @@ function findSpellbookByClass(actor, tag) {
   return null;
 }
 
+/**
+ * Whether a book can currently cast the given spell level.
+ *
+ * Mirrors the system's own "which spell levels does this book show" computation in
+ * ActorSheetPF#_prepareSpellbook — which lives in the sheet, not in actor data, so
+ * there is nothing on the actor to read this off of.
+ *
+ * Deliberately progression-only. The system has a SECOND ceiling — the casting
+ * ability score (actor-pf's `maxLevelByAblScore`, surfaced as `lowAbilityScore`) —
+ * that is NOT consulted here: it moves with ability damage and buffs, and since a
+ * gate going false tears the grant down, folding it in would make spells flap on
+ * and off the sheet mid-combat.
+ *
+ * `casterType` and `spellPreparationMode` are read after actor prep, which has
+ * already normalized invalid values (see actor-pf's caster-type auto-correct).
+ */
+function canCastLevel(actor, bookId, spellLevel) {
+  const book = actor.system?.attributes?.spells?.spellbooks?.[bookId];
+  if (!book) return false;
+  if (spellLevel <= 0 && !book.hasCantrips) return false;
+
+  let max;
+  if (book.autoSpellLevelCalculation) {
+    const cl = book.cl?.autoSpellLevelTotal ?? 0;
+    if (cl < 1) return false; // no caster levels yet — nothing is castable
+    const table = pf1.config.casterProgression?.castsPerDay?.[book.spellPreparationMode]?.[book.casterType];
+    // Clamp like the system does elsewhere for this table, so a CL pushed past 20
+    // by a buff reads the level-20 row instead of falling off the end.
+    const casts = table?.[Math.clamp(cl, 1, 20) - 1];
+    if (!casts) return false;
+    max = casts.length - 1;
+  } else {
+    // Manual slots: the system has no progression to consult and falls back to
+    // caster type alone, so this ceiling does not move with level. The entry's own
+    // level threshold is what paces a manual book.
+    max = book.casterType === "low" ? 4 : book.casterType === "med" ? 6 : 9;
+  }
+  return spellLevel <= max;
+}
+
+/**
+ * The level a supplement spell will land at: its level on the associated class's
+ * list when there is one, else its own. Shared so the gate is checked against
+ * exactly the level buildSpell will write.
+ */
+function resolveSpellLevel(source, tag, mode) {
+  if (mode === MODE.class && tag) {
+    const learned = source.system?.learnedAt?.class?.[tag];
+    if (Number.isFinite(learned)) return Math.clamp(learned, 0, 9);
+  }
+  return source.system?.level ?? 0;
+}
+
+/**
+ * Resolve source uuids once per reconcile. The fixpoint loop re-runs the desired-set
+ * computation on every pass, and the castable check needs each spell's document just
+ * to read its level — without memoizing, one configured spell would be fetched up to
+ * MAX_PASSES times per parent. Promises are cached, so concurrent asks dedupe too.
+ */
+function makeSourceCache() {
+  const cache = new Map();
+  return (uuid) => {
+    if (!cache.has(uuid)) cache.set(uuid, fromUuid(uuid).catch(() => null));
+    return cache.get(uuid);
+  };
+}
+
 // ─── Build creation data ────────────────────────────────────────────────────────
 
 /** Resolve a source uuid and prepare a fresh import-ready data object. */
@@ -112,14 +179,7 @@ async function buildSpell(uuid, bookId, tag, mode, parentId, perDay = 0) {
     return null;
   }
   foundry.utils.setProperty(data, "system.spellbook", bookId);
-
-  // Prefer the spell's learned level for the associated class; otherwise keep its own.
-  let level = data.system?.level ?? 0;
-  if (mode === MODE.class && tag) {
-    const learned = source.system?.learnedAt?.class?.[tag];
-    if (Number.isFinite(learned)) level = Math.clamp(learned, 0, 9);
-  }
-  foundry.utils.setProperty(data, "system.level", level);
+  foundry.utils.setProperty(data, "system.level", resolveSpellLevel(source, tag, mode));
 
   // Spell-like uses per day: a positive count sets prepared uses; 0 means at-will.
   if (mode === MODE.spelllike) {
@@ -172,8 +232,12 @@ async function ensureSpelllikeBook(actor) {
 /**
  * The full set of grants a parent wants right now. Each entry carries whether its
  * gate is currently `met` and a `build()` that produces creation data on demand.
+ *
+ * Async only because the castable check has to read the spell's level off its source
+ * document; `resolve` memoizes that per reconcile. `build()` stays lazy either way —
+ * a source is only imported when its gate is actually crossed.
  */
-function buildDesired(actor, parent) {
+async function buildDesired(actor, parent, resolve) {
   const out = [];
   const tag = getAssociatedClass(parent);
   const clvl = classLevel(actor, tag);
@@ -206,11 +270,24 @@ function buildDesired(actor, parent) {
       bookId = "spelllike";
       needsSpelllikeBook = true;
     }
+
+    // Second gate: the destination book must actually be able to cast this spell's
+    // level. Class mode only — the spell-like book is HD-driven and has no class
+    // progression to outpace, which is the whole point of the check. This is what
+    // lets one feature serve a full and a partial caster: the partial caster's
+    // higher-level spells simply stay unmet until its own progression catches up,
+    // and never arrive at all if it never reaches that level.
+    let castable = true;
+    if (cfg.mode === MODE.class && cfg.requireCastable && bookId != null) {
+      const source = await resolve(uuid);
+      castable = !!source && canCastLevel(actor, bookId, resolveSpellLevel(source, tag, cfg.mode));
+    }
+
     out.push({
       source: uuid,
       threshold,
       kind: "spell",
-      met: bookId != null && gateQty >= threshold,
+      met: bookId != null && gateQty >= threshold && castable,
       needsSpelllikeBook,
       build: () => buildSpell(uuid, bookId, tag, cfg.mode, parent.id, perDay),
     });
@@ -306,9 +383,9 @@ function linkTargetId(link) {
  * materialized and only OUR entries are added/removed, so hand-authored children on
  * the parent are preserved.
  */
-async function reconcileParent(actor, parent) {
+async function reconcileParent(actor, parent, resolve) {
   const ledger = foundry.utils.deepClone(parent.getFlag(MODULE_ID, GRANTED) ?? {});
-  const desired = buildDesired(actor, parent);
+  const desired = await buildDesired(actor, parent, resolve);
   const bySource = new Map(desired.map((d) => [d.source, d]));
 
   let changed = false;
@@ -384,6 +461,8 @@ async function reconcileActor(actor) {
 
   busy.add(actor.id);
   let dirty = false;
+  // One source cache for the whole reconcile, shared across passes and parents.
+  const resolve = makeSourceCache();
   try {
     for (let pass = 0; pass < MAX_PASSES; pass++) {
       let changed = false;
@@ -392,7 +471,7 @@ async function reconcileActor(actor) {
       // overlap is what trips the system's duplicate-identifier check during prep.
       if (await enforceArchetypes(actor)) changed = true;
       for (const parent of actor.items.filter(isConfiguredParent)) {
-        if (await reconcileParent(actor, parent)) changed = true;
+        if (await reconcileParent(actor, parent, resolve)) changed = true;
       }
       if (changed) dirty = true;
       if (!changed) return;
@@ -515,6 +594,17 @@ Hooks.on("updateItem", (item, changed) => {
   const actor = item.actor;
   if (!(actor instanceof Actor) || busy.has(actor.id)) return;
   if (foundry.utils.hasProperty(changed, `flags.${MODULE_ID}`)) reconcileActor(actor);
+});
+
+// A spellbook was reconfigured. Caster type, preparation mode, the auto-CL formula
+// and `inUse` all move which spell levels a book can cast, and none of them touch a
+// class item — so pf1ClassLevelChange never fires for them. Filtered tightly to the
+// spells block; reconcile is idempotent, so a redundant pass costs only a scan.
+// (A caster level changed purely by an ItemChange is derived during prep and issues
+// no actor update, so it is not covered here — the next real event catches it.)
+Hooks.on("updateActor", (actor, changed) => {
+  if (busy.has(actor.id)) return;
+  if (foundry.utils.hasProperty(changed, "system.attributes.spells")) reconcileActor(actor);
 });
 
 // An item was removed. An archetype restores what it replaced; a grant

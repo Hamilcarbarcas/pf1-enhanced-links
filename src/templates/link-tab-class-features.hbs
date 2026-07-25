@@ -16,6 +16,11 @@
         <span class="name">
           {{name}}{{#if broken}} <i class="fa-solid fa-link-slash" data-tooltip="PF1.Missing"></i>{{/if}}
         </span>
+        {{#unless broken}}
+        <a class="source-item" data-uuid="{{uuid}}" data-tooltip="UUID: {{uuid}}">
+          <i class="fa-solid fa-book compendium-icon" inert></i>
+        </a>
+        {{/unless}}
       </td>
       <td class="extra-field">
         <input class="el-level" type="number" min="0" step="1" value="{{level}}" data-index="{{index}}"
@@ -68,6 +73,11 @@
             <span class="name">
               {{name}}{{#if broken}} <i class="fa-solid fa-link-slash" data-tooltip="PF1.Missing"></i>{{/if}}
             </span>
+            {{#unless broken}}
+            <a class="source-item" data-uuid="{{uuid}}" data-tooltip="UUID: {{uuid}}">
+              <i class="fa-solid fa-book compendium-icon" inert></i>
+            </a>
+            {{/unless}}
           </td>
           <td class="extra-field">{{level}}</td>
         </tr>

@@ -70,12 +70,19 @@ export function getClassFeatures(item) {
   return Array.isArray(raw) ? foundry.utils.deepClone(raw) : [];
 }
 
-/** Spell-supplement config on an item, normalized with sane defaults. */
+/**
+ * Spell-supplement config on an item, normalized with sane defaults.
+ *
+ * `requireCastable` defaults ON (only an explicit `false` turns it off), so a
+ * config that predates the option gains the check too — a spell whose level the
+ * destination book cannot yet cast is held back until it can.
+ */
 export function getSpellSupplements(item) {
   const raw = item.getFlag(MODULE_ID, FLAG.spellSupplements) ?? {};
   return {
     mode: raw.mode === MODE.spelllike ? MODE.spelllike : MODE.class,
     gated: raw.gated === true,
+    requireCastable: raw.requireCastable !== false,
     items: Array.isArray(raw.items) ? foundry.utils.deepClone(raw.items) : [],
   };
 }
@@ -171,10 +178,23 @@ function getDropData(event) {
 }
 
 /**
+ * Reading order for a level-gated list: by gate level, then name for ties —
+ * the same order the system's own class associations are usually authored in.
+ */
+function byLevelThenName(a, b) {
+  return a.level - b.level || a.name.localeCompare(b.name);
+}
+
+/**
  * Resolve stored link entries into display rows (name, image, broken flag) and
  * stamp each with its source index for edit/remove wiring.
+ *
+ * `sorted` orders the ROWS only — `index` still points at the entry's position in
+ * the stored array, so delete/level edits stay correct without rewriting the flag.
+ * The sort therefore lands on the next render of the panel (open, tab switch, drop,
+ * delete); a level typed into a row doesn't yank it out from under the cursor.
  */
-async function resolveEntries(list) {
+async function resolveEntries(list, { sorted = false } = {}) {
   const rows = [];
   for (let index = 0; index < list.length; index++) {
     const entry = list[index];
@@ -189,6 +209,7 @@ async function resolveEntries(list) {
       broken: !doc,
     });
   }
+  if (sorted) rows.sort(byLevelThenName);
   return rows;
 }
 
@@ -227,19 +248,21 @@ async function resolveArchetype(item) {
   ctx.baseClassName = baseClass.name;
 
   const assoc = baseClass.system?.links?.classAssociations ?? [];
-  ctx.associations = await Promise.all(
-    assoc.map(async (a) => {
-      const doc = await fromUuid(a.uuid).catch(() => null);
-      return {
-        uuid: a.uuid,
-        level: a.level ?? 1,
-        name: doc?.name ?? a.uuid,
-        img: doc?.img ?? "icons/svg/item-bag.svg",
-        broken: !doc,
-        excluded: arch.excluded.includes(a.uuid),
-      };
-    })
-  );
+  ctx.associations = (
+    await Promise.all(
+      assoc.map(async (a) => {
+        const doc = await fromUuid(a.uuid).catch(() => null);
+        return {
+          uuid: a.uuid,
+          level: a.level ?? 1,
+          name: doc?.name ?? a.uuid,
+          img: doc?.img ?? "icons/svg/item-bag.svg",
+          broken: !doc,
+          excluded: arch.excluded.includes(a.uuid),
+        };
+      })
+    )
+  ).sort(byLevelThenName); // read-only list — keyed by uuid, so order is free to change
   return ctx;
 }
 
@@ -305,7 +328,8 @@ async function buildContext(item, editable, kind) {
       tabId: TAB.classFeatures,
       help: game.i18n.localize("PF1EL.Help.ClassFeatures"),
       editable,
-      items: await resolveEntries(getClassFeatures(item)),
+      // Class features are always level-gated, so they always sort.
+      items: await resolveEntries(getClassFeatures(item), { sorted: true }),
       ...(await resolveArchetype(item)),
     };
   }
@@ -321,9 +345,14 @@ async function buildContext(item, editable, kind) {
     editable,
     canClass,
     gated: cfg.gated,
+    // Castability is a property of a class spellbook's progression; the spell-like
+    // book is HD-driven and shares none, so the control only shows in class mode.
+    requireCastable: cfg.requireCastable,
     isClassMode: effectiveMode === MODE.class,
     isSpelllikeMode: effectiveMode === MODE.spelllike,
-    items: await resolveEntries(cfg.items),
+    // Ungated, the level column is hidden and the numbers are meaningless — leave
+    // those in the order they were dropped.
+    items: await resolveEntries(cfg.items, { sorted: cfg.gated }),
   };
 }
 
@@ -392,6 +421,15 @@ function wireControls(panel, ctx) {
     })
   );
 
+  // The system binds its own .source-item opener in activateListeners, which runs
+  // before this hook injects our panels — so our rows need their own handler.
+  panel.querySelectorAll("a.source-item").forEach((a) =>
+    a.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      openSourceItem(ev.currentTarget.dataset.uuid, item.actor);
+    })
+  );
+
   // Level edits don't change structure and the input already shows the value, so
   // we persist without refreshing (which would steal focus mid-edit).
   panel.querySelectorAll("input.el-level").forEach((input) =>
@@ -414,6 +452,12 @@ function wireControls(panel, ctx) {
       cfg.gated = ev.currentTarget.checked;
       await setSpellSupplements(item, cfg);
       await refresh(); // toggles the level column
+    });
+    // No structural change — the box already shows the new state, so skip the refresh.
+    panel.querySelector("input.el-castable")?.addEventListener("change", async (ev) => {
+      const cfg = getSpellSupplements(item);
+      cfg.requireCastable = ev.currentTarget.checked;
+      await setSpellSupplements(item, cfg);
     });
     // Times/day edits don't change structure — persist without refreshing.
     panel.querySelectorAll("input.el-perday").forEach((input) =>
@@ -463,6 +507,18 @@ function wireControls(panel, ctx) {
       })
     );
   }
+}
+
+/**
+ * Open the sheet of a linked entry's source document — the book icon, matching the
+ * system's _openLinkedItem. Uuids are resolved relative to the owning actor so
+ * actor-relative forms (".Item.abc") work the same as absolute compendium ones.
+ */
+async function openSourceItem(uuid, actor = null) {
+  if (!uuid) return;
+  const doc = await fromUuid(uuid, { relative: actor }).catch(() => null);
+  if (!doc) return ui.notifications.warn(game.i18n.localize("PF1EL.Warning.SourceMissing"));
+  doc.sheet?.render(true, { focus: true });
 }
 
 /** @returns {Promise<boolean>} Whether the base class was set. */

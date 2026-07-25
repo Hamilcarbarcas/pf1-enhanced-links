@@ -20,6 +20,14 @@
       <input type="checkbox" class="el-gated" {{#if gated}}checked{{/if}} {{#unless editable}}disabled{{/unless}}>
       <span>{{localize "PF1EL.Gating.Label"}}</span>
     </label>
+
+    {{#if isClassMode}}
+    <label class="el-control el-checkbox" data-tooltip="PF1EL.Castable.Hint">
+      <input type="checkbox" class="el-castable" {{#if requireCastable}}checked{{/if}}
+        {{#unless editable}}disabled{{/unless}}>
+      <span>{{localize "PF1EL.Castable.Label"}}</span>
+    </label>
+    {{/if}}
   </div>
 
   {{#unless canClass}}
@@ -42,6 +50,11 @@
         <span class="name">
           {{name}}{{#if broken}} <i class="fa-solid fa-link-slash" data-tooltip="PF1.Missing"></i>{{/if}}
         </span>
+        {{#unless broken}}
+        <a class="source-item" data-uuid="{{uuid}}" data-tooltip="UUID: {{uuid}}">
+          <i class="fa-solid fa-book compendium-icon" inert></i>
+        </a>
+        {{/unless}}
       </td>
       {{#if @root.gated}}
       <td class="extra-field">

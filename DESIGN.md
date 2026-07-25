@@ -45,6 +45,7 @@ classFeatures    = [ { uuid, level } ]
 spellSupplements = {
   mode:  "class" | "spelllike",       // destination
   gated: boolean,                     // unchecked ⇒ every entry treated as threshold 0
+  requireCastable: boolean,           // class mode only; DEFAULTS TRUE (absent ⇒ on)
   items: [ { uuid, level } ]          // `level` = GRANT threshold, not spell level
 }
 granted          = { [createdItemId]: { source, level } }   // teardown ledger (Phase 2)
@@ -75,7 +76,12 @@ which the system can also stamp with `system.class` via class associations.)*
   unified seam, since class levels *and* HD both derive from class-type items
   (racial HD is a class item too). Plus two secondary triggers: **parent item
   added** and **parent item removed**. Those are load-bearing for ungated spells,
-  which never see a level-up event.
+  which never see a level-up event. Plus an **actor update touching
+  `system.attributes.spells`** — caster type, preparation mode, the auto-CL formula
+  and `inUse` all move the castable-level gate without touching a class item, so
+  `pf1ClassLevelChange` never fires for them. (A caster level moved purely by an
+  ItemChange is derived during prep and issues no update, so it isn't covered; the
+  next real event picks it up.)
 - **Gate quantity per link:** class-feature and spell `mode:"class"` → the
   associated class's level. Spell `mode:"spelllike"` → actor HD total.
 - **Full re-scan each event:** evaluate all configured items against current
@@ -118,6 +124,44 @@ with their book *pre-assigned*.
 | Class Spellcasting | off | — | the parent is on the actor |
 | Spell-like abilities | on | actor HD | the actor reaches N HD |
 | Spell-like abilities | off | — | the parent is on the actor |
+
+### Castable-level gate (`requireCastable`)
+
+A second, independent condition in **class mode only**: the destination book must be
+able to cast the spell's level. It exists so one feature can be shared by a full and
+a partial caster — thresholds authored for the full caster (a 4th-level spell at
+class level 8) would otherwise hand the partial caster a spell it can't cast, and
+would hand it 7th–9th level spells it can *never* cast.
+
+- **Both conditions are ANDed into the same `met`**, so nothing new is needed for
+  "arrives once both hold": the reconcile is a full re-scan of live state on every
+  event and nothing is latched. A spell that is level-gated but not yet castable is
+  simply unmet, and grants on whichever event makes both true. The never-castable
+  case needs no special handling either — `met` is just never true.
+- **Spell level** is resolved with the same `learnedAt.class[tag]` → own-level
+  fallback that `buildSpell` writes (shared as `resolveSpellLevel`), so the gate is
+  checked against exactly the level the spell will land at.
+- **Max castable level** mirrors the system's `_prepareSpellbook` — which lives in
+  the *sheet*, not in actor data, so there is nothing on the actor to read. Auto
+  calculation indexes `casterProgression.castsPerDay[prepMode][casterType][cl-1]`
+  and takes `length - 1` (CL clamped 1–20, so a buffed CL reads the top row instead
+  of falling off the table); manual-slot books have no progression and fall back to
+  caster type alone (low 4 / med 6 / high 9), which means they don't pace with level
+  — the entry's own threshold does that. `hasCantrips` gates level 0.
+- **Progression only — the ability-score ceiling is deliberately excluded.** The
+  system's other limit (`maxLevelByAblScore`) moves with ability damage and buffs;
+  since an unmet gate *deletes* the grant, including it would flap spells on and off
+  the sheet mid-combat.
+- **Teardown is symmetric** with the existing gate-down behavior: a grant whose
+  level stops being castable is removed and returns on a later reconcile.
+- **Not applied in spell-like mode.** That book is HD-driven with no class
+  progression to outpace, so the check is meaningless there; the control is hidden
+  rather than disabled.
+- **Cost:** the check needs each configured spell's source document just to read its
+  level, so the desired-set computation is async and memoizes uuid → document for
+  the duration of one reconcile (otherwise the fixpoint loop refetches up to
+  `MAX_PASSES` times per parent). `build()` stays lazy — sources are only *imported*
+  when a gate is actually crossed.
 
 ### Book routing
 - `mode:"class"` → target the actor book where `book.class === <parent's class
@@ -230,6 +274,9 @@ templates** work, the original motivation.
    *(done, via the engine)*
 4. **Feature 2 — spell supplements** — both modes, gating checkbox, book routing,
    and the ensure-SLA-book step. *(done, via the engine)*
+5. **Castable-level gate** — `requireCastable` (class mode, default on), the
+   progression-only max-level mirror, the async/memoized desired-set, and the
+   spellbook-config trigger. *(done)*
 
 ### Engine notes / deviations from the sketch
 - **Every grant is child-linked to its parent.** Both class-feature and spell
@@ -272,6 +319,11 @@ templates** work, the original motivation.
   we inject into; `_onLinksDrop` — the drop path we intercept.
 - `documents/item/item-spell.mjs` · `_adjustNewItem` / `spellbook` getter — level
   & book binding.
+- `applications/actor/actor-sheet.mjs` · `_prepareSpellbook` — the max-castable-level
+  computation the `requireCastable` gate mirrors (sheet-side, not actor data).
+- `documents/actor/actor-pf.mjs` · `prepareSpellbook` — caster-type/prep-mode
+  normalization the gate relies on, and `maxLevelByAblScore`, the ability-score
+  ceiling the gate deliberately ignores.
 - `documents/actor/actor-pf.mjs` · `_updateSpellBook` — `inUse` gate; why a dead
   book yields inert spells.
 - `public/template.json` — fixed books: primary / secondary / tertiary / spelllike.
