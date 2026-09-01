@@ -1,3 +1,6 @@
 module.zip
 *.log
 .DS_Store
+
+# The design record is kept locally, not published with the module.
+DESIGN*.md
