@@ -50,6 +50,11 @@ const TAB_META = {
 // Spell-supplement routing modes.
 export const MODE = { class: "class", spelllike: "spelllike" };
 
+// Spell-like pools: entries sharing an id share one Times/day count.
+export const POOL_IDS = ["A", "B", "C"];
+// On a pooled spell-like grant: "<parentId>:<poolId>".
+export const POOL_FLAG = "pool";
+
 // v13 relocated these behind foundry.applications.handlebars; fall back to the
 // (deprecated) globals so this keeps working if the namespace shifts again.
 const renderTpl = foundry.applications?.handlebars?.renderTemplate ?? renderTemplate;
@@ -76,11 +81,14 @@ export function getClassFeatures(item) {
  * `requireCastable` defaults ON (only an explicit `false` turns it off), so a
  * config that predates the option gains the check too — a spell whose level the
  * destination book cannot yet cast is held back until it can.
+ *
+ * An item that can't be class-tied is always spell-like, whatever is stored: the
+ * tab shows it that way, and an untouched dropdown stores no mode at all.
  */
 export function getSpellSupplements(item) {
   const raw = item.getFlag(MODULE_ID, FLAG.spellSupplements) ?? {};
   return {
-    mode: raw.mode === MODE.spelllike ? MODE.spelllike : MODE.class,
+    mode: raw.mode === MODE.spelllike || !canClassAssociate(item) ? MODE.spelllike : MODE.class,
     gated: raw.gated === true,
     requireCastable: raw.requireCastable !== false,
     items: Array.isArray(raw.items) ? foundry.utils.deepClone(raw.items) : [],
@@ -199,10 +207,13 @@ async function resolveEntries(list, { sorted = false } = {}) {
   for (let index = 0; index < list.length; index++) {
     const entry = list[index];
     const doc = await fromUuid(entry.uuid).catch(() => null);
+    const pool = POOL_IDS.includes(entry.pool) ? entry.pool : "";
     rows.push({
       uuid: entry.uuid,
       level: Number.isFinite(entry.level) ? entry.level : 1,
       perDay: Number.isFinite(entry.perDay) ? entry.perDay : 0, // 0 = at will (spell-like only)
+      pool,
+      poolOptions: POOL_IDS.map((id) => ({ id, selected: id === pool })),
       index,
       name: doc?.name ?? entry.uuid,
       img: doc?.img ?? "icons/svg/item-bag.svg",
@@ -459,14 +470,47 @@ function wireControls(panel, ctx) {
       cfg.requireCastable = ev.currentTarget.checked;
       await setSpellSupplements(item, cfg);
     });
-    // Times/day edits don't change structure — persist without refreshing.
+    // Pooled entries share one Times/day: write it to every member and mirror the
+    // other rows' inputs in place, since neither edit changes structure.
+    const showPerDay = (index, perDay) => {
+      const el = panel.querySelector(`input.el-perday[data-index="${index}"]`);
+      if (el) el.value = perDay;
+    };
+
     panel.querySelectorAll("input.el-perday").forEach((input) =>
       input.addEventListener("change", async (ev) => {
         const index = Number(ev.currentTarget.dataset.index);
         const perDay = Math.max(0, Math.floor(Number(ev.currentTarget.value) || 0));
         const cfg = getSpellSupplements(item);
-        if (!cfg.items[index]) return;
-        cfg.items[index].perDay = perDay;
+        const entry = cfg.items[index];
+        if (!entry) return;
+        entry.perDay = perDay;
+        if (POOL_IDS.includes(entry.pool)) {
+          cfg.items.forEach((e, i) => {
+            if (i === index || e.pool !== entry.pool) return;
+            e.perDay = perDay;
+            showPerDay(i, perDay);
+          });
+        }
+        await setSpellSupplements(item, cfg);
+      })
+    );
+
+    panel.querySelectorAll("select.el-pool").forEach((select) =>
+      select.addEventListener("change", async (ev) => {
+        const index = Number(ev.currentTarget.dataset.index);
+        const pool = POOL_IDS.includes(ev.currentTarget.value) ? ev.currentTarget.value : "";
+        const cfg = getSpellSupplements(item);
+        const entry = cfg.items[index];
+        if (!entry) return;
+        if (pool) entry.pool = pool;
+        else delete entry.pool;
+        // Joining a pool takes the pool's existing Times/day.
+        const member = pool && cfg.items.find((e, i) => i !== index && e.pool === pool);
+        if (member) {
+          entry.perDay = member.perDay ?? 0;
+          showPerDay(index, entry.perDay);
+        }
         await setSpellSupplements(item, cfg);
       })
     );
@@ -596,6 +640,84 @@ async function updateEntryLevel({ item, kind, index, level }) {
     await setSpellSupplements(item, cfg);
   }
 }
+
+// ─── Actor sheet: grant and pool indicators ─────────────────────────────────────
+
+/**
+ * Mark spell rows with hover icons:
+ *   • a gift on every spell a feature granted, listing each granting item and the
+ *     uses it gives;
+ *   • a link on every pooled spell, listing the rest of its pool.
+ * Declared as data-tooltip-html so the core tooltip manager owns them (it
+ * activates from a capture-phase listener, so a hand-activated tooltip would be
+ * replaced on its timer).
+ */
+Hooks.on("renderActorSheetPF", (app, html) => {
+  const actor = app.actor;
+  if (!actor) return;
+
+  const el = html?.[0] ?? html;
+  const esc = (s) => foundry.utils.escapeHTML(String(s ?? ""));
+  const uniform = (u) => pf1?.utils?.internal?.uniformUuid?.(u) ?? u;
+  const tooltipHtml = (title, lines) =>
+    `<h4>${esc(title)}</h4><ul class="el-tt-list">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`;
+
+  /** Append a hover-only icon after a spell's name. */
+  const addIcon = (spell, cls, icon, html) => {
+    const name = el.querySelector(`li.item[data-item-id="${spell.id}"] .item-name h4`);
+    if (!name || name.querySelector(`.${cls}`)) return;
+    const i = document.createElement("i");
+    i.className = `fa-solid ${icon} el-row-icon ${cls}`;
+    i.dataset.tooltipHtml = html;
+    i.dataset.tooltipDirection = "UP";
+    i.dataset.tooltipClass = "el-tooltip";
+    // The name row posts the spell to chat on click; the icon is hover-only.
+    i.addEventListener("click", (ev) => ev.stopPropagation());
+    name.append(i);
+  };
+
+  // Grants: every item whose ledger records a spell, with the uses its entry gives.
+  /** @type {Map<string, string[]>} spell id -> granter lines */
+  const grants = new Map();
+  for (const parent of actor.items) {
+    const ledger = parent.getFlag(MODULE_ID, "granted");
+    if (!ledger) continue;
+    const cfg = getSpellSupplements(parent);
+    for (const [itemId, rec] of Object.entries(ledger)) {
+      if (actor.items.get(itemId)?.type !== "spell") continue;
+      let line = parent.name;
+      if (cfg.mode === MODE.spelllike) {
+        const entry = cfg.items.find((e) => uniform(e.uuid) === uniform(rec.source));
+        const n = Math.max(0, Math.floor(Number(entry?.perDay) || 0));
+        if (entry) {
+          const uses = n > 0 ? game.i18n.format("PF1EL.Grant.PerDay", { n }) : game.i18n.localize("PF1EL.Grant.AtWill");
+          line = `${parent.name} (${uses})`;
+        }
+      }
+      if (!grants.has(itemId)) grants.set(itemId, []);
+      grants.get(itemId).push(line);
+    }
+  }
+  const grantTitle = game.i18n.localize("PF1EL.Grant.Title");
+  for (const [spellId, lines] of grants) {
+    addIcon(actor.items.get(spellId), "el-grant-icon", "fa-gift", tooltipHtml(grantTitle, lines));
+  }
+
+  // Pools: spells sharing a pool key.
+  /** @type {Map<string, Item[]>} pool key -> member spells */
+  const pools = new Map();
+  for (const item of actor.items) {
+    const key = item.type === "spell" ? item.getFlag(MODULE_ID, POOL_FLAG) : null;
+    if (!key) continue;
+    if (!pools.has(key)) pools.set(key, []);
+    pools.get(key).push(item);
+  }
+  const poolTitle = game.i18n.localize("PF1EL.Pool.TooltipTitle");
+  for (const members of pools.values()) {
+    const tooltip = tooltipHtml(poolTitle, members.map((m) => m.name));
+    for (const member of members) addIcon(member, "el-pool-icon", "fa-link", tooltip);
+  }
+});
 
 // Exposed for the Phase 2 engine and for console debugging.
 globalThis.pf1EnhancedLinks = {

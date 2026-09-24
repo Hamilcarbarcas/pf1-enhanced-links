@@ -43,8 +43,32 @@
 - **Compendium link icon** on every row in both sub-tabs (and in the archetype
   exclusion checklist), matching the system's own link sections: click the book to
   open the linked item's sheet. Hidden on broken links, which have nothing to open.
+- **Spell-like pools**: a Pool column (A/B/C) in Spell-like Abilities mode. Spells
+  in the same pool share one Times/day count on the actor ("1/day — enlarge person
+  or reduce person"); using one spends it for all. Pools are scoped to their item.
+  On the actor sheet, pooled spells carry a link icon whose tooltip lists the pool.
+- **Granted-by icon** on the actor sheet: every spell granted through Spell
+  Supplements carries a gift icon whose tooltip lists the granting item(s) and, for
+  spell-like abilities, the uses each gives (e.g. "Race (1/day)").
+- **Spell-like stacking**: several items granting the same spell-like ability add
+  their uses together on one spell instead of creating copies (any at-will grant
+  makes it at will). Removing an item or dropping below its gate takes back only
+  its share; the spell is removed with its last grant. A spell granted by more than
+  one item is not child-linked, so deleting one of them can't cascade it away.
+- **Times/day edits now reach existing spells**: changing an entry's Times/day
+  updates the spell already on the actor instead of only affecting new grants.
 - **Auto-sort by level** for level-gated lists: Class Features, Spell Supplements
   with level gating enabled, and the archetype exclusion checklist are ordered by
   gate level (ties by name). Sorting is display-only — the stored link order is
   untouched — and applies whenever the panel renders, so editing a level saves
   immediately but doesn't move the row out from under the cursor mid-edit.
+
+### Fixed
+- Torn-down grants stayed in the parent's grant ledger, because flag updates merge
+  rather than replace. Every later reconcile found them again and ran to the
+  10-pass cap, logging "reconcile hit the pass cap".
+- An item that can't be tied to a class (a race, a template) whose Destination
+  dropdown was never touched granted nothing: the tab showed Spell-like Abilities
+  but the engine read the missing setting as Class Spellcasting.
+- Removing every entry from an item's configuration left its existing grants on
+  the actor; they are now torn down.

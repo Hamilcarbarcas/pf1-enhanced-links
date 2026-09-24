@@ -66,7 +66,32 @@ has no progression to consult and allows levels by caster type alone — up to 4
 low, 6th for medium — so on those books the entry's own level gate does the pacing.)
 
 In **Spell-like Abilities** mode each spell also gets a **Times/day** value that
-sets its uses per day on the actor (0 = at-will).
+sets its uses per day on the actor (0 = at-will). Changing it later updates the
+spell already on the actor.
+
+**Pools.** Spell-like spells can share one daily count ("1/day — *enlarge person*
+or *reduce person*"): pick the same **Pool** (A, B or C) on each row. A pool has a
+single Times/day, so editing it on one row changes the others, and a row joining a
+pool takes the pool's value. On the actor, using any spell in the pool spends the
+count for all of them. Each pooled spell shows a <i class="fa-solid fa-link"></i>
+link icon after its name on the actor sheet; hover it to see the rest of its pool.
+
+**Granted-by icon.** Every spell these tabs put on an actor shows a
+<i class="fa-solid fa-gift"></i> gift icon after its name on the actor sheet. Hover
+it to see which item granted it and, for spell-like abilities, how many uses each
+one gives — e.g. *Race (1/day)*, *Feat (at will)*. A stacked spell lists every item
+contributing to it. A pool belongs to its item: two items that both use pool A
+don't share. Pools are ignored at 0 Times/day, since an at-will ability has no
+count to share.
+
+**Stacking.** When more than one item grants the same spell-like ability, they add
+up on one spell instead of creating copies: 1/day from a race and 2/day from a feat
+is one spell at 3/day, and any at-will grant makes it at will. The new uses are
+available right away. Removing an item, or its level gate dropping, takes back only
+that item's share, and the spell goes when its last grant does. A spell granted by
+one item is that item's child, as usual; a spell granted by several is nobody's
+child, so deleting one of them can't delete it. Pooled spells never stack — each
+stays its own copy — because one count can't be both shared and separate.
 
 ## Where each tab shows up
 

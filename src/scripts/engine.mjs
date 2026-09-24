@@ -24,6 +24,8 @@
 import {
   MODULE_ID,
   MODE,
+  POOL_IDS,
+  POOL_FLAG,
   getClassFeatures,
   getSpellSupplements,
   getAssociatedClass,
@@ -37,10 +39,19 @@ const MAX_PASSES = 10;
 const GRANTED = "granted"; // on parent: ledger of what it has produced
 const GRANT_PARENT = "grantParent"; // on child: id of the parent that made it
 const GRANT_SOURCE = "grantSource"; // on child: source uuid it was built from
+const POOL = POOL_FLAG;
+
+// Update option marking the pool sync's own writes.
+const POOL_SYNC = "pf1elPoolSync";
 
 // Actors currently mid-reconcile. Held across awaits so the item CRUD hooks fired
 // by our own create/delete calls are ignored (re-entry guard).
 const busy = new Set();
+
+// Ids of items the system is cascade-deleting with a removed parent. Settle leaves
+// them alone rather than racing that delete.
+const cascading = new Set();
+const CASCADE_MS = 5_000;
 
 // ─── Guards ─────────────────────────────────────────────────────────────────────
 
@@ -170,7 +181,7 @@ async function buildClassFeature(uuid, tag, parentId) {
   return data;
 }
 
-async function buildSpell(uuid, bookId, tag, mode, parentId, perDay = 0) {
+async function buildSpell(uuid, bookId, tag, mode, parentId, perDay = 0, poolKey = null) {
   const built = await buildFromSource(uuid);
   if (!built) return null;
   const { source, data } = built;
@@ -204,6 +215,7 @@ async function buildSpell(uuid, bookId, tag, mode, parentId, perDay = 0) {
       divineFocus: 0,
     });
     foundry.utils.setProperty(data, "system.materials", { value: "", focus: "", gpValue: 0 });
+    if (poolKey) foundry.utils.setProperty(data, `flags.${MODULE_ID}.${POOL}`, poolKey);
   }
 
   stampGrant(data, uuid, parentId);
@@ -257,8 +269,12 @@ async function buildDesired(actor, parent, resolve) {
   // Feature 2 — spell supplements. Ungated ⇒ threshold 0 (always met once a book
   // resolves), which is how the same engine serves both gated and ungated.
   const cfg = getSpellSupplements(parent);
-  for (const { uuid, level, perDay } of cfg.items) {
+  for (const { uuid, level, perDay, pool } of cfg.items) {
     const threshold = cfg.gated ? (Number.isFinite(level) ? level : 1) : 0;
+    // A pool only means something for a counted spell-like ability; unpooled
+    // spell-like grants stack onto an existing copy instead.
+    const spelllike = cfg.mode === MODE.spelllike;
+    const poolId = spelllike && Number(perDay) > 0 && POOL_IDS.includes(pool) ? pool : "";
     let gateQty;
     let bookId;
     let needsSpelllikeBook = false;
@@ -289,7 +305,10 @@ async function buildDesired(actor, parent, resolve) {
       kind: "spell",
       met: bookId != null && gateQty >= threshold && castable,
       needsSpelllikeBook,
-      build: () => buildSpell(uuid, bookId, tag, cfg.mode, parent.id, perDay),
+      pool: poolId,
+      stackable: spelllike && !poolId,
+      build: () =>
+        buildSpell(uuid, bookId, tag, cfg.mode, parent.id, perDay, poolId ? `${parent.id}:${poolId}` : null),
     });
   }
 
@@ -367,9 +386,45 @@ function isConfiguredParent(item) {
   return arch?.replaces === true && Array.isArray(arch?.excluded) && arch.excluded.length > 0;
 }
 
+/** Whether an item's ledger still records grants (possibly with its config emptied). */
+function hasLedger(item) {
+  return Object.keys(item.getFlag(MODULE_ID, GRANTED) ?? {}).length > 0;
+}
+
 /** The tail id of a link's (possibly relative) target uuid, e.g. ".Item.abc" → "abc". */
 function linkTargetId(link) {
   return typeof link?.uuid === "string" ? link.uuid.split(".").pop() : null;
+}
+
+/** Whether any parent other than `parent` records `itemId` in its ledger. */
+function referencedElsewhere(actor, itemId, parent) {
+  return actor.items.some((it) => it !== parent && it.getFlag(MODULE_ID, GRANTED)?.[itemId]);
+}
+
+/** Whether an item is an engine-made spell-like spell. */
+function isEngineSpelllike(item) {
+  return item.type === "spell" && !!item.getFlag(MODULE_ID, GRANT_SOURCE) && item.system?.spellbook === "spelllike";
+}
+
+/** An existing unpooled engine spell-like spell from this source, for a stacking grant. */
+function findStack(actor, source) {
+  const target = uniformUuid(source);
+  return (
+    actor.items.find(
+      (it) =>
+        isEngineSpelllike(it) &&
+        !it.getFlag(MODULE_ID, POOL) &&
+        !cascading.has(it.id) &&
+        uniformUuid(it.getFlag(MODULE_ID, GRANT_SOURCE)) === target
+    ) ?? null
+  );
+}
+
+/** Ledger record for a desired grant. */
+function ledgerRecord(d) {
+  const rec = { source: d.source, threshold: d.threshold, kind: d.kind };
+  if (d.pool) rec.pool = d.pool;
+  return rec;
 }
 
 /**
@@ -395,6 +450,8 @@ async function reconcileParent(actor, parent, resolve) {
   const editChildLinks = () => (childLinks ??= foundry.utils.deepClone(parent.toObject().system?.links?.children ?? []));
 
   // Teardown: ledger entries no longer wanted, or whose item was removed by hand.
+  // A spell-like spell other parents still contribute to loses only this
+  // parent's reference; a changed pool assignment re-grants with the new sharing.
   const toDelete = [];
   for (const [itemId, rec] of Object.entries(ledger)) {
     const stillPresent = actor.items.get(itemId);
@@ -403,8 +460,8 @@ async function reconcileParent(actor, parent, resolve) {
       changed = true;
     } else {
       const d = bySource.get(rec.source);
-      if (d && d.met) continue;
-      toDelete.push(itemId);
+      if (d && d.met && (rec.pool ?? "") === (d.pool ?? "")) continue;
+      if (!referencedElsewhere(actor, itemId, parent)) toDelete.push(itemId);
       delete ledger[itemId];
       changed = true;
     }
@@ -424,6 +481,13 @@ async function reconcileParent(actor, parent, resolve) {
     const data = [];
     const meta = [];
     for (const d of toCreate) {
+      // Stack onto an existing copy: record it, settle derives its uses.
+      const stack = d.stackable ? findStack(actor, d.source) : null;
+      if (stack) {
+        ledger[stack.id] = ledgerRecord(d);
+        changed = true;
+        continue;
+      }
       const built = await d.build();
       if (built) {
         data.push(built);
@@ -433,7 +497,7 @@ async function reconcileParent(actor, parent, resolve) {
     if (data.length) {
       const created = await actor.createEmbeddedDocuments("Item", data, { render: false });
       for (let i = 0; i < created.length; i++) {
-        ledger[created[i].id] = { source: meta[i].source, threshold: meta[i].threshold, kind: meta[i].kind };
+        ledger[created[i].id] = ledgerRecord(meta[i]);
         // Link every grant as a child of the parent (actor-relative uuid, name
         // omitted — same shape the system writes for a "children" link) so the
         // system's delete cascade owns teardown on parent removal.
@@ -444,9 +508,116 @@ async function reconcileParent(actor, parent, resolve) {
   }
 
   if (changed) {
-    const update = { [`flags.${MODULE_ID}.${GRANTED}`]: ledger };
+    // Flags merge on update, so a dropped entry needs an explicit deletion key or
+    // it survives in the database and is found again on every later pass.
+    const written = { ...ledger };
+    for (const itemId of Object.keys(parent.getFlag(MODULE_ID, GRANTED) ?? {})) {
+      if (!(itemId in ledger)) written[`-=${itemId}`] = null;
+    }
+    const update = { [`flags.${MODULE_ID}.${GRANTED}`]: written };
     if (childLinks !== null) update["system.links.children"] = childLinks;
     await parent.update(update, { render: false });
+  }
+  return changed;
+}
+
+/**
+ * Derive every engine spell-like spell from the parents whose ledgers record it
+ * (its contributors), reading their current config: uses, at will, the pool key,
+ * and the child link. A spell nobody contributes to any more is deleted, unless
+ * the system is already cascade-deleting it. Returns true if anything changed.
+ */
+async function settleSpelllike(actor) {
+  /** @type {Map<string, {parent: Item, rec: object}[]>} */
+  const refs = new Map();
+  for (const parent of actor.items) {
+    for (const [itemId, rec] of Object.entries(parent.getFlag(MODULE_ID, GRANTED) ?? {})) {
+      if (!refs.has(itemId)) refs.set(itemId, []);
+      refs.get(itemId).push({ parent, rec });
+    }
+  }
+
+  const toDelete = [];
+  const updates = [];
+  const linkEdits = new Map(); // parent id -> edited children array
+  const childLinksOf = (p) =>
+    linkEdits.get(p.id) ?? foundry.utils.deepClone(p.toObject().system?.links?.children ?? []);
+
+  for (const spell of actor.items) {
+    if (!isEngineSpelllike(spell)) continue;
+    const contributors = refs.get(spell.id) ?? [];
+    if (!contributors.length) {
+      if (!cascading.has(spell.id)) toDelete.push(spell.id);
+      continue;
+    }
+
+    // Each contributor's current Times/day; a contributor whose entry is gone is
+    // left for its own teardown on the next pass.
+    let atWill = false;
+    let max = 0;
+    let counted = 0;
+    for (const { parent, rec } of contributors) {
+      const target = uniformUuid(rec.source);
+      const entry = getSpellSupplements(parent).items.find((e) => uniformUuid(e.uuid) === target);
+      if (!entry) continue;
+      counted++;
+      const n = Math.max(0, Math.floor(Number(entry.perDay) || 0));
+      if (n > 0) max += n;
+      else atWill = true;
+    }
+    if (!counted) continue;
+
+    const update = {};
+    const wasAtWill = !!spell.system.atWill;
+    const oldMax = spell.system.preparation?.max ?? 0;
+    const oldValue = spell.system.preparation?.value ?? 0;
+    let value = oldValue;
+    if (wasAtWill && !atWill) value = max;
+    else if (max > oldMax) value = oldValue + (max - oldMax);
+    value = Math.clamp(value, 0, max);
+    if (wasAtWill !== atWill) update["system.atWill"] = atWill;
+    // max and value together: the system raises max to match a lone value update.
+    if (max !== oldMax || value !== oldValue) {
+      update["system.preparation.max"] = max;
+      update["system.preparation.value"] = value;
+    }
+
+    const only = contributors.length === 1 ? contributors[0] : null;
+    const poolKey = only?.rec.pool ? `${only.parent.id}:${only.rec.pool}` : null;
+    if ((spell.getFlag(MODULE_ID, POOL) ?? null) !== poolKey) {
+      if (poolKey) update[`flags.${MODULE_ID}.${POOL}`] = poolKey;
+      else update[`flags.${MODULE_ID}.-=${POOL}`] = null;
+    }
+    if (Object.keys(update).length) updates.push({ _id: spell.id, ...update });
+
+    // One contributor: its child. Shared: nobody's, so no parent's delete cascade
+    // takes it.
+    for (const { parent } of contributors) {
+      const links = childLinksOf(parent);
+      const linked = links.some((l) => linkTargetId(l) === spell.id);
+      if (parent === only?.parent && !linked) {
+        links.push({ uuid: spell.getRelativeUUID(actor) });
+        linkEdits.set(parent.id, links);
+      } else if (parent !== only?.parent && linked) {
+        linkEdits.set(
+          parent.id,
+          links.filter((l) => linkTargetId(l) !== spell.id)
+        );
+      }
+    }
+  }
+
+  for (const [_id, children] of linkEdits) updates.push({ _id, "system.links.children": children });
+
+  let changed = false;
+  const deletions = toDelete.filter((id) => actor.items.has(id));
+  if (deletions.length) {
+    await actor.deleteEmbeddedDocuments("Item", deletions, { render: false });
+    changed = true;
+  }
+  if (updates.length) {
+    await actor.updateEmbeddedDocuments("Item", updates, { render: false });
+    changed = true;
   }
   return changed;
 }
@@ -470,9 +641,11 @@ async function reconcileActor(actor) {
       // never created while the base it supersedes is still on the actor — that
       // overlap is what trips the system's duplicate-identifier check during prep.
       if (await enforceArchetypes(actor)) changed = true;
-      for (const parent of actor.items.filter(isConfiguredParent)) {
+      // A ledger with no config left still has grants to tear down.
+      for (const parent of actor.items.filter((it) => isConfiguredParent(it) || hasLedger(it))) {
         if (await reconcileParent(actor, parent, resolve)) changed = true;
       }
+      if (await settleSpelllike(actor)) changed = true;
       if (changed) dirty = true;
       if (!changed) return;
       if (pass === MAX_PASSES - 1) {
@@ -618,10 +791,44 @@ Hooks.on("deleteItem", async (item) => {
   // Restore base features a removed archetype was suppressing.
   await restoreReplacedFeatures(actor, item);
 
+  // A removed parent: its own children are the system cascade's to delete, but a
+  // spell-like spell it shared with other parents must lose its contribution.
+  if (hasLedger(item)) {
+    const ids = (item.system?.links?.children ?? []).map(linkTargetId).filter(Boolean);
+    for (const id of ids) cascading.add(id);
+    setTimeout(() => ids.forEach((id) => cascading.delete(id)), CASCADE_MS);
+    reconcileActor(actor);
+    return;
+  }
+
   // A grant hand-deleted while its parent still lives → re-heal (the gate may still
   // be met). If the parent is gone this was cascade teardown — nothing to do.
   const parentId = item.getFlag(MODULE_ID, GRANT_PARENT);
   if (parentId && actor.items.get(parentId)) reconcileActor(actor);
+});
+
+// Pooled spell-like spells share one count: a change to one's uses left (a cast,
+// a rest, a hand edit) is mirrored to the rest of its pool. Runs on the client
+// that made the change, which owns the actor, so no GM is needed.
+Hooks.on("updateItem", (item, changed, options, userId) => {
+  if (game.user.id !== userId || options?.[POOL_SYNC]) return;
+  const value = foundry.utils.getProperty(changed, "system.preparation.value");
+  if (value === undefined || item.type !== "spell") return;
+  const key = item.getFlag(MODULE_ID, POOL);
+  const actor = item.actor;
+  if (!key || !actor) return;
+
+  const updates = [];
+  for (const other of actor.items) {
+    if (other === item || other.type !== "spell" || other.getFlag(MODULE_ID, POOL) !== key) continue;
+    const target = Math.min(value, other.system.preparation?.max ?? value);
+    if ((other.system.preparation?.value ?? null) === target) continue;
+    updates.push({ _id: other.id, "system.preparation.value": target });
+  }
+  if (!updates.length) return;
+  actor
+    .updateEmbeddedDocuments("Item", updates, { [POOL_SYNC]: true })
+    .catch((err) => console.error(LOG, "pool sync failed on", actor.name, err));
 });
 
 // Expose for console debugging alongside the Phase 1 accessors.

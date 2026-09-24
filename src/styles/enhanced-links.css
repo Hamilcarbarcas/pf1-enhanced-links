@@ -55,6 +55,10 @@
   text-align: center;
 }
 
+.enhanced-links-tab select.el-pool {
+  width: 3.5em;
+}
+
 /* Archetype ("replaces class features") section */
 .enhanced-links-tab .el-archetype {
   margin-top: 0.75rem;
@@ -90,4 +94,35 @@
 .enhanced-links-tab table.el-exclusions .controls {
   width: 4.5em;
   text-align: center;
+}
+
+/* Actor sheet: hover icons after a spell's name (granted-by gift, pool link). */
+.item-name h4 .el-row-icon {
+  margin-left: 0.35em;
+  font-size: 0.85em;
+  opacity: 0.6;
+  cursor: help;
+}
+
+.item-name h4 .el-row-icon:hover {
+  opacity: 1;
+}
+
+/* Their tooltip: heading and a list. */
+.el-tooltip {
+  text-align: left;
+  max-width: 22em;
+}
+
+.el-tooltip h4 {
+  margin: 0 0 0.1rem;
+  border: none;
+  font-weight: bold;
+  opacity: 0.8;
+}
+
+.el-tooltip .el-tt-list {
+  margin: 0;
+  padding-left: 1.1em;
+  list-style: disc;
 }

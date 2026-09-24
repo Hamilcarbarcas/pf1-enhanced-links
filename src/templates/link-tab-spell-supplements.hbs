@@ -40,7 +40,10 @@
     <tr>
       <th>{{localize "PF1.Item"}}</th>
       {{#if gated}}<th class="extra-field">{{localize "PF1EL.Field.Level"}}</th>{{/if}}
-      {{#if isSpelllikeMode}}<th class="extra-field">{{localize "PF1EL.Field.PerDay"}}</th>{{/if}}
+      {{#if isSpelllikeMode}}
+      <th class="extra-field">{{localize "PF1EL.Field.PerDay"}}</th>
+      <th class="extra-field" data-tooltip="PF1EL.PoolHint">{{localize "PF1EL.Field.Pool"}}</th>
+      {{/if}}
       <th class="controls"></th>
     </tr>
     {{#each items}}
@@ -66,6 +69,15 @@
       <td class="extra-field">
         <input class="el-perday" type="number" min="0" step="1" value="{{perDay}}" data-index="{{index}}"
           data-tooltip="PF1EL.PerDayHint" {{#unless @root.editable}}disabled{{/unless}}>
+      </td>
+      <td class="extra-field">
+        <select class="el-pool" data-index="{{index}}" data-tooltip="PF1EL.PoolHint"
+          {{#unless @root.editable}}disabled{{/unless}}>
+          <option value="">{{localize "PF1EL.Pool.None"}}</option>
+          {{#each poolOptions}}
+          <option value="{{id}}" {{#if selected}}selected{{/if}}>{{id}}</option>
+          {{/each}}
+        </select>
       </td>
       {{/if}}
       <td class="controls">
