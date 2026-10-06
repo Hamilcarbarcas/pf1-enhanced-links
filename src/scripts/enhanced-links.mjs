@@ -16,6 +16,8 @@
  * engine.mjs and is wired up in a later phase. See DESIGN.md.
  */
 
+import { decorateScriptRows, deleteScriptsFor } from "./create-scripts.mjs";
+
 export const MODULE_ID = "pf1-enhanced-links";
 const LOG = "PF1 Enhanced Links |";
 
@@ -91,6 +93,7 @@ export function getSpellSupplements(item) {
     mode: raw.mode === MODE.spelllike || !canClassAssociate(item) ? MODE.spelllike : MODE.class,
     gated: raw.gated === true,
     requireCastable: raw.requireCastable !== false,
+    domain: raw.domain === true, // class mode only: grants are Domain/School spells
     items: Array.isArray(raw.items) ? foundry.utils.deepClone(raw.items) : [],
   };
 }
@@ -359,6 +362,7 @@ async function buildContext(item, editable, kind) {
     // Castability is a property of a class spellbook's progression; the spell-like
     // book is HD-driven and shares none, so the control only shows in class mode.
     requireCastable: cfg.requireCastable,
+    domain: cfg.domain,
     isClassMode: effectiveMode === MODE.class,
     isSpelllikeMode: effectiveMode === MODE.spelllike,
     // Ungated, the level column is hidden and the numbers are meaningless — leave
@@ -424,6 +428,8 @@ function wireControls(panel, ctx) {
   const { item, kind } = ctx;
   const refresh = () => refreshTab(panel, ctx);
 
+  decorateScriptRows(panel, { item, kind, editable: ctx.editable });
+
   panel.querySelectorAll("a.delete-link").forEach((a) =>
     a.addEventListener("click", async (ev) => {
       ev.preventDefault();
@@ -468,6 +474,11 @@ function wireControls(panel, ctx) {
     panel.querySelector("input.el-castable")?.addEventListener("change", async (ev) => {
       const cfg = getSpellSupplements(item);
       cfg.requireCastable = ev.currentTarget.checked;
+      await setSpellSupplements(item, cfg);
+    });
+    panel.querySelector("input.el-domain")?.addEventListener("change", async (ev) => {
+      const cfg = getSpellSupplements(item);
+      cfg.domain = ev.currentTarget.checked;
       await setSpellSupplements(item, cfg);
     });
     // Pooled entries share one Times/day: write it to every member and mirror the
@@ -615,15 +626,18 @@ async function onDrop({ item, kind, event }) {
 
 async function removeEntry({ item, kind, index }) {
   if (!Number.isInteger(index)) return;
+  let removed;
   if (kind === "classFeatures") {
     const list = getClassFeatures(item);
-    list.splice(index, 1);
+    [removed] = list.splice(index, 1);
     await setClassFeatures(item, list);
   } else {
     const cfg = getSpellSupplements(item);
-    cfg.items.splice(index, 1);
+    [removed] = cfg.items.splice(index, 1);
     await setSpellSupplements(item, cfg);
   }
+  // The row's create scripts go with it.
+  if (removed?.uuid) await deleteScriptsFor(item, kind, removed.uuid);
 }
 
 async function updateEntryLevel({ item, kind, index, level }) {

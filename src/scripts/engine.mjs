@@ -31,6 +31,8 @@ import {
   getAssociatedClass,
   getArchetype,
 } from "./enhanced-links.mjs";
+import { SCRIPT_TAB, scriptsFor, runCreateScripts } from "./create-scripts.mjs";
+import { dedupeEnabled, dataKeys, findExisting, isManaged, referencers } from "./dedupe.mjs";
 
 const LOG = "PF1 Enhanced Links |";
 const MAX_PASSES = 10;
@@ -40,6 +42,8 @@ const GRANTED = "granted"; // on parent: ledger of what it has produced
 const GRANT_PARENT = "grantParent"; // on child: id of the parent that made it
 const GRANT_SOURCE = "grantSource"; // on child: source uuid it was built from
 const POOL = POOL_FLAG;
+const SCRIPTED = "scripted"; // on child: its row has create scripts, so it never stacks
+const DOMAIN_STAMP = "domain"; // on child: the Domain/School setting last applied to it
 
 // Update option marking the pool sync's own writes.
 const POOL_SYNC = "pf1elPoolSync";
@@ -181,7 +185,7 @@ async function buildClassFeature(uuid, tag, parentId) {
   return data;
 }
 
-async function buildSpell(uuid, bookId, tag, mode, parentId, perDay = 0, poolKey = null) {
+async function buildSpell(uuid, bookId, tag, mode, parentId, perDay = 0, poolKey = null, scripted = false, domain = false) {
   const built = await buildFromSource(uuid);
   if (!built) return null;
   const { source, data } = built;
@@ -191,6 +195,10 @@ async function buildSpell(uuid, bookId, tag, mode, parentId, perDay = 0, poolKey
   }
   foundry.utils.setProperty(data, "system.spellbook", bookId);
   foundry.utils.setProperty(data, "system.level", resolveSpellLevel(source, tag, mode));
+  if (domain) {
+    foundry.utils.setProperty(data, "system.domain", true);
+    foundry.utils.setProperty(data, `flags.${MODULE_ID}.${DOMAIN_STAMP}`, true);
+  }
 
   // Spell-like uses per day: a positive count sets prepared uses; 0 means at-will.
   if (mode === MODE.spelllike) {
@@ -216,6 +224,7 @@ async function buildSpell(uuid, bookId, tag, mode, parentId, perDay = 0, poolKey
     });
     foundry.utils.setProperty(data, "system.materials", { value: "", focus: "", gpValue: 0 });
     if (poolKey) foundry.utils.setProperty(data, `flags.${MODULE_ID}.${POOL}`, poolKey);
+    if (scripted) foundry.utils.setProperty(data, `flags.${MODULE_ID}.${SCRIPTED}`, true);
   }
 
   stampGrant(data, uuid, parentId);
@@ -275,6 +284,9 @@ async function buildDesired(actor, parent, resolve) {
     // spell-like grants stack onto an existing copy instead.
     const spelllike = cfg.mode === MODE.spelllike;
     const poolId = spelllike && Number(perDay) > 0 && POOL_IDS.includes(pool) ? pool : "";
+    // A row with create scripts makes its own variant (cold fireball), so merging
+    // it with another parent's copy would lose one version or the other.
+    const scripted = spelllike && scriptsFor(parent, SCRIPT_TAB.spellSupplements, uuid).length > 0;
     let gateQty;
     let bookId;
     let needsSpelllikeBook = false;
@@ -306,9 +318,20 @@ async function buildDesired(actor, parent, resolve) {
       met: bookId != null && gateQty >= threshold && castable,
       needsSpelllikeBook,
       pool: poolId,
-      stackable: spelllike && !poolId,
+      stackable: spelllike && !poolId && !scripted,
+      domain: cfg.mode === MODE.class && cfg.domain,
       build: () =>
-        buildSpell(uuid, bookId, tag, cfg.mode, parent.id, perDay, poolId ? `${parent.id}:${poolId}` : null),
+        buildSpell(
+          uuid,
+          bookId,
+          tag,
+          cfg.mode,
+          parent.id,
+          perDay,
+          poolId ? `${parent.id}:${poolId}` : null,
+          scripted,
+          cfg.mode === MODE.class && cfg.domain
+        ),
     });
   }
 
@@ -396,10 +419,14 @@ function linkTargetId(link) {
   return typeof link?.uuid === "string" ? link.uuid.split(".").pop() : null;
 }
 
-/** Whether any parent other than `parent` records `itemId` in its ledger. */
+/** Whether any parent other than `parent` references the item (ledgers or Supplements claims). */
 function referencedElsewhere(actor, itemId, parent) {
-  return actor.items.some((it) => it !== parent && it.getFlag(MODULE_ID, GRANTED)?.[itemId]);
+  const item = actor.items.get(itemId);
+  return !!item && referencers(actor, item, parent.id).size > 0;
 }
+
+/** Every source a ledger record stands for: one row, plus rows that resolved to the same item. */
+const recSources = (rec) => [rec.source, ...(rec.also ?? [])];
 
 /** Whether an item is an engine-made spell-like spell. */
 function isEngineSpelllike(item) {
@@ -414,6 +441,7 @@ function findStack(actor, source) {
       (it) =>
         isEngineSpelllike(it) &&
         !it.getFlag(MODULE_ID, POOL) &&
+        !it.getFlag(MODULE_ID, SCRIPTED) &&
         !cascading.has(it.id) &&
         uniformUuid(it.getFlag(MODULE_ID, GRANT_SOURCE)) === target
     ) ?? null
@@ -453,15 +481,37 @@ async function reconcileParent(actor, parent, resolve) {
   // A spell-like spell other parents still contribute to loses only this
   // parent's reference; a changed pool assignment re-grants with the new sharing.
   const toDelete = [];
+  const domainSync = [];
   for (const [itemId, rec] of Object.entries(ledger)) {
     const stillPresent = actor.items.get(itemId);
     if (!stillPresent) {
       delete ledger[itemId];
       changed = true;
     } else {
-      const d = bySource.get(rec.source);
-      if (d && d.met && (rec.pool ?? "") === (d.pool ?? "")) continue;
-      if (!referencedElsewhere(actor, itemId, parent)) toDelete.push(itemId);
+      const keep = recSources(rec).filter((s) => {
+        const d = bySource.get(s);
+        return d && d.met && (rec.pool ?? "") === (d.pool ?? "");
+      });
+      if (keep.length) {
+        // Domain/School follows the checkbox, but only when the checkbox changed, so
+        // a spell toggled by hand stays as it is.
+        const d = bySource.get(keep[0]);
+        if (d.kind === "spell" && d.domain !== undefined) {
+          const stamp = stillPresent.getFlag(MODULE_ID, DOMAIN_STAMP) ?? false;
+          if (stamp !== d.domain) {
+            domainSync.push({ _id: itemId, "system.domain": d.domain, [`flags.${MODULE_ID}.${DOMAIN_STAMP}`]: d.domain });
+          }
+        }
+        // Some of the rows sharing this item still want it.
+        if (keep.length !== recSources(rec).length) {
+          ledger[itemId] = { ...ledgerRecord(bySource.get(keep[0])), ...(keep.length > 1 ? { also: keep.slice(1) } : {}) };
+          changed = true;
+        }
+        continue;
+      }
+      // Only items a link made are ever deleted; one that was already on the actor
+      // (added by hand, a class association) just loses this reference.
+      if (!referencedElsewhere(actor, itemId, parent) && isManaged(stillPresent)) toDelete.push(itemId);
       delete ledger[itemId];
       changed = true;
     }
@@ -471,15 +521,33 @@ async function reconcileParent(actor, parent, resolve) {
     if (linkIdx >= 0) links.splice(linkIdx, 1);
   }
   if (toDelete.length) await actor.deleteEmbeddedDocuments("Item", toDelete, { render: false });
+  if (domainSync.length) {
+    await actor.updateEmbeddedDocuments("Item", domainSync, { render: false });
+    changed = true;
+  }
 
   // Create: newly-met sources not already granted.
-  const already = new Set(Object.values(ledger).map((r) => r.source));
+  const fresh = []; // [item, desired] pairs, for the create scripts
+  const already = new Set(Object.values(ledger).flatMap(recSources));
   const toCreate = desired.filter((d) => d.met && !already.has(d.source));
   if (toCreate.length) {
     if (toCreate.some((d) => d.needsSpelllikeBook)) await ensureSpelllikeBook(actor);
 
+    // Reference an item instead of creating it; a second row of this parent that
+    // resolves to the same item joins the first record.
+    const reference = (item, d) => {
+      const rec = ledger[item.id];
+      if (rec) rec.also = [...(rec.also ?? []), d.source];
+      else ledger[item.id] = ledgerRecord(d);
+      fresh.push([item, d]);
+      changed = true;
+    };
+
+    const dedupe = dedupeEnabled();
     const data = [];
     const meta = [];
+    const joiners = []; // per data index: rows that resolved to the same new item
+    const pendingKeys = new Map(); // match key -> data index, for duplicates within this pass
     for (const d of toCreate) {
       // Stack onto an existing copy: record it, settle derives its uses.
       const stack = d.stackable ? findStack(actor, d.source) : null;
@@ -489,19 +557,50 @@ async function reconcileParent(actor, parent, resolve) {
         continue;
       }
       const built = await d.build();
-      if (built) {
-        data.push(built);
-        meta.push(d);
+      if (!built) continue;
+
+      // Class features: one the actor already has is shared, not copied.
+      if (dedupe && d.kind === "classFeature") {
+        const existing = findExisting(actor, built);
+        if (existing && !cascading.has(existing.id)) {
+          reference(existing, d);
+          continue;
+        }
+        const keys = dataKeys(built);
+        const index = keys.map((k) => pendingKeys.get(k)).find((i) => i !== undefined);
+        if (index !== undefined) {
+          joiners[index].push(d);
+          continue;
+        }
+        keys.forEach((k) => pendingKeys.set(k, data.length));
       }
+      data.push(built);
+      meta.push(d);
+      joiners.push([]);
     }
     if (data.length) {
       const created = await actor.createEmbeddedDocuments("Item", data, { render: false });
-      for (let i = 0; i < created.length; i++) {
-        ledger[created[i].id] = ledgerRecord(meta[i]);
+      // Pair by the grantSource stamped in build, never by position: the result can
+      // come back in another order, or short if a preCreate hook vetoed one, and a
+      // positional pairing then runs one row's create scripts on another row's item.
+      const bySource = new Map();
+      for (const item of created) {
+        const key = uniformUuid(item.getFlag(MODULE_ID, GRANT_SOURCE));
+        bySource.set(key, [...(bySource.get(key) ?? []), item]);
+      }
+      for (let i = 0; i < meta.length; i++) {
+        const item = bySource.get(uniformUuid(meta[i].source))?.shift();
+        if (!item) {
+          console.warn(LOG, "grant was not created (vetoed?):", meta[i].source);
+          continue;
+        }
+        ledger[item.id] = ledgerRecord(meta[i]);
+        fresh.push([item, meta[i]]);
+        for (const d of joiners[i]) reference(item, d);
         // Link every grant as a child of the parent (actor-relative uuid, name
         // omitted — same shape the system writes for a "children" link) so the
         // system's delete cascade owns teardown on parent removal.
-        editChildLinks().push({ uuid: created[i].getRelativeUUID(actor) });
+        editChildLinks().push({ uuid: item.getRelativeUUID(actor) });
       }
       changed = true;
     }
@@ -517,6 +616,12 @@ async function reconcileParent(actor, parent, resolve) {
     const update = { [`flags.${MODULE_ID}.${GRANTED}`]: written };
     if (childLinks !== null) update["system.links.children"] = childLinks;
     await parent.update(update, { render: false });
+  }
+
+  // Create scripts run once the ledger is written, still inside the re-entry guard.
+  for (const [child, d] of fresh) {
+    const kind = d.kind === "classFeature" ? SCRIPT_TAB.classFeatures : SCRIPT_TAB.spellSupplements;
+    await runCreateScripts({ parent, child, kind, source: d.source });
   }
   return changed;
 }
@@ -623,6 +728,63 @@ async function settleSpelllike(actor) {
 }
 
 /**
+ * Child links of shared items other than spell-like spells (which settleSpelllike
+ * owns). An item a link made (Class Features grant, or Supplements copy referenced
+ * by a ledger) is the child of its one referencer, nobody's child when shared, and
+ * deleted when nothing references it. Items that were already on the actor are
+ * never linked or deleted here. Returns true if anything changed.
+ */
+async function settleShared(actor) {
+  const toDelete = [];
+  const linkEdits = new Map(); // parent id -> edited children array
+  const childLinksOf = (p) =>
+    linkEdits.get(p.id) ?? foundry.utils.deepClone(p.toObject().system?.links?.children ?? []);
+
+  const inLedger = new Set();
+  for (const p of actor.items) Object.keys(p.getFlag(MODULE_ID, GRANTED) ?? {}).forEach((id) => inLedger.add(id));
+
+  for (const item of actor.items) {
+    if (isEngineSpelllike(item) || !isManaged(item) || cascading.has(item.id)) continue;
+    // Supplements-only items are managed by supplements.mjs on the adding client.
+    if (!inLedger.has(item.id) && !item.getFlag(MODULE_ID, GRANT_SOURCE)) continue;
+
+    const refs = referencers(actor, item);
+    if (!refs.size) {
+      toDelete.push(item.id);
+      continue;
+    }
+    const only = refs.size === 1 ? [...refs][0] : null;
+    for (const p of actor.items) {
+      const links = childLinksOf(p);
+      const linked = links.some((l) => linkTargetId(l) === item.id);
+      if (p.id === only && !linked) {
+        links.push({ uuid: item.getRelativeUUID(actor) });
+        linkEdits.set(p.id, links);
+      } else if (!only && linked) {
+        // Shared: nobody's child, so no one parent's delete cascade takes it.
+        linkEdits.set(
+          p.id,
+          links.filter((l) => linkTargetId(l) !== item.id)
+        );
+      }
+    }
+  }
+
+  let changed = false;
+  const deletions = toDelete.filter((id) => actor.items.has(id));
+  if (deletions.length) {
+    await actor.deleteEmbeddedDocuments("Item", deletions, { render: false });
+    changed = true;
+  }
+  const updates = [...linkEdits].map(([_id, children]) => ({ _id, "system.links.children": children }));
+  if (updates.length) {
+    await actor.updateEmbeddedDocuments("Item", updates, { render: false });
+    changed = true;
+  }
+  return changed;
+}
+
+/**
  * Reconcile every configured parent on the actor, looping to a fixpoint so that
  * cascading grants (a grant that is itself a parent) settle within one event.
  */
@@ -646,6 +808,7 @@ async function reconcileActor(actor) {
         if (await reconcileParent(actor, parent, resolve)) changed = true;
       }
       if (await settleSpelllike(actor)) changed = true;
+      if (await settleShared(actor)) changed = true;
       if (changed) dirty = true;
       if (!changed) return;
       if (pass === MAX_PASSES - 1) {

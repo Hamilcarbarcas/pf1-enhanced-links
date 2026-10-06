@@ -65,6 +65,11 @@ granted spells vanish and reappear. (For a spellbook set to manual slots the sys
 has no progression to consult and allows levels by caster type alone — up to 4th for
 low, 6th for medium — so on those books the entry's own level gate does the pacing.)
 
+A **Domain/School spells** checkbox (Class Spellcasting only, off by default) marks
+every spell this item grants as a Domain/School spell, the same setting as on the
+spell's own sheet. Changing the checkbox later updates spells already on the actor.
+A spell you toggle by hand keeps your setting until the checkbox changes again.
+
 In **Spell-like Abilities** mode each spell also gets a **Times/day** value that
 sets its uses per day on the actor (0 = at-will). Changing it later updates the
 spell already on the actor.
@@ -92,6 +97,70 @@ that item's share, and the spell goes when its last grant does. A spell granted 
 one item is that item's child, as usual; a spell granted by several is nobody's
 child, so deleting one of them can't delete it. Pooled spells never stack — each
 stays its own copy — because one count can't be both shared and separate.
+
+## Create scripts on links
+
+Every row of **Class Features**, **Spell Supplements** and the system's own
+**Supplements** tab can carry scripts that run on the item **when that link creates
+it**. Use them to grant a variant without a separate compendium entry: a
+cold-themed school's *fireball* that deals cold damage, or *align weapon* that can
+only align to good.
+
+The controls sit in the row's name cell, just left of the
+<i class="fa-solid fa-book"></i> book icon:
+
+- <i class="fa-solid fa-plus"></i> creates a script stored on this item, for this row
+  only, and opens the editor.
+- Each script then shows as an icon in the row. Click it to edit. Right-click it to
+  remove it.
+
+A script works like an item's own create script call. `item` is the newly created
+item, and `actor`, `token` and `shared` are available as usual. The scope also has
+`parent` (the item granting it), `source` (the linked uuid) and `link` (which tab).
+A typical script just updates the new item:
+
+```js
+const actions = item.toObject().system.actions;
+actions[0].damage.parts[0].types = ["cold"];
+await item.update({ "system.actions": actions });
+```
+
+Notes:
+
+- Scripts run **every time** the link creates the item: the first grant, a level
+  gate crossed again, or re-adding a granted item that was deleted by hand. Editing a
+  script doesn't change items that are already granted.
+- Class Features and Spell Supplements scripts run on the GM's client. Supplements
+  scripts run on the client of whoever added the parent item.
+- A spell-like spell from a row with scripts is always its own copy and never
+  stacks with the same spell from another item. Its uses per day still come from
+  the row's Times/day.
+- Removing a row from Class Features or Spell Supplements also removes its scripts.
+  Removing a row from the system's Supplements tab leaves them stored, and they come
+  back if you link the same item again.
+- On the Supplements and Class Features tabs, when the actor already has the item, a
+  newly added parent runs its scripts on that existing item. See below.
+
+## No duplicate linked items
+
+PF1's own **Supplements** create a new copy every time an item linking them is added,
+even when the actor already has one. A second copy of a feature produces PF1's
+duplicate tag warnings. With **Don't duplicate linked items** on (a world setting,
+**on by default**), an actor that already has the item keeps its one copy. The new
+item shares it, and runs its create scripts on it. **Class Features** grants work the
+same way: a feature the actor already has, for example from a class or another feat,
+is shared rather than granted a second time.
+
+- **Counts as already present:** the same source item, or an item of the same type
+  with the same identifier (tag). That's the clash PF1 warns about.
+- **Always copied:** physical items (two kits that each grant rope give two ropes)
+  and spells.
+- **Removing one parent**, or one Class Features level gate dropping, leaves a shared
+  item in place for the others. It goes when the last item that granted it is
+  removed. An item that was already on the actor before a link shared it (added by
+  hand, or from a class) is never removed this way.
+
+Turn the setting off to get PF1's normal copies back.
 
 ## Where each tab shows up
 

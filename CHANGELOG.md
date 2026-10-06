@@ -62,8 +62,26 @@
   gate level (ties by name). Sorting is display-only — the stored link order is
   untouched — and applies whenever the panel renders, so editing a level saves
   immediately but doesn't move the row out from under the cursor mid-edit.
+- **Create scripts on links**: each row of Class Features, Spell Supplements and the
+  system's Supplements tab can carry scripts (+ adds one) that run on the item when
+  that link creates it. Useful for granting a
+  variant, such as a cold *fireball*, without a separate compendium entry.
+  Spell-like spells from a scripted row never stack with other copies.
+- **Domain/School spells** checkbox on Spell Supplements (Class Spellcasting mode):
+  spells the item grants are marked as Domain/School spells. Toggling it updates
+  spells already granted.
+- **No duplicate linked items** (world setting, on by default): PF1's Supplements
+  and the Class Features tab no longer create a second copy of something the actor
+  already has (same source, or same type and tag). The new parent shares the existing
+  item and runs its create scripts on it. A shared item stays until the last parent
+  that granted it is removed. Physical items and spells are still copied as before.
 
 ### Fixed
+- A grant pass that created several items paired them with their rows by position,
+  so when the created items came back in another order a row's create scripts ran on
+  a different row's item (Align Weapon's script renaming Forbid Action), and the
+  ledger and child link recorded the wrong item. Items are now paired by the source
+  uuid stamped on each one.
 - Torn-down grants stayed in the parent's grant ledger, because flag updates merge
   rather than replace. Every later reconcile found them again and ran to the
   10-pass cap, logging "reconcile hit the pass cap".

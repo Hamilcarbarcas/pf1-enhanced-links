@@ -59,6 +59,34 @@
   width: 3.5em;
 }
 
+/* Per-row create scripts, left of the book icon. Also injected into the system's
+ * Supplements tab, so scoped by our own class rather than .enhanced-links-tab. */
+table.item-links td.item-name .el-scripts {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0 0.35rem;
+  flex: 0 0 auto;
+}
+
+table.item-links td.item-name .el-scripts .el-script-chip img {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border: none;
+  vertical-align: middle;
+}
+
+table.item-links td.item-name .el-scripts .el-script-add {
+  font-size: 0.8em;
+  opacity: 0.6;
+}
+
+table.item-links td.item-name .el-scripts .el-script-add:hover {
+  opacity: 1;
+}
+
 /* Archetype ("replaces class features") section */
 .enhanced-links-tab .el-archetype {
   margin-top: 0.75rem;

@@ -27,6 +27,11 @@
         {{#unless editable}}disabled{{/unless}}>
       <span>{{localize "PF1EL.Castable.Label"}}</span>
     </label>
+
+    <label class="el-control el-checkbox" data-tooltip="PF1EL.Domain.Hint">
+      <input type="checkbox" class="el-domain" {{#if domain}}checked{{/if}} {{#unless editable}}disabled{{/unless}}>
+      <span>{{localize "PF1EL.Domain.Label"}}</span>
+    </label>
     {{/if}}
   </div>
 

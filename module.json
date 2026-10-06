@@ -30,7 +30,8 @@
   },
   "esmodules": [
     "src/scripts/enhanced-links.mjs",
-    "src/scripts/engine.mjs"
+    "src/scripts/engine.mjs",
+    "src/scripts/supplements.mjs"
   ],
   "styles": [
     "src/styles/enhanced-links.css"
