@@ -1,0 +1,47 @@
+<div class="pf1el-picker-body">
+  <header class="pf1el-picker-head">
+    <div class="pf1el-picker-heading">
+      <strong>{{heading}}</strong>
+      <span class="pf1el-picker-remaining">{{remaining}}</span>
+    </div>
+    <input type="search" class="pf1el-picker-filter" value="{{filter}}" placeholder="{{localize 'PF1EL.Sel.Picker.Filter'}}" autocomplete="off">
+    <div class="pf1el-picker-tools">
+      <label class="pf1el-picker-hide-label">
+        <input type="checkbox" class="pf1el-picker-hide" {{checked hideFailed}}>
+        {{localize "PF1EL.Sel.Picker.HideFailed"}}
+      </label>
+      <div class="pf1el-picker-sort">
+        <button type="button" class="{{#if sortDefault}}active{{/if}}" data-action="sortDefault" data-tooltip="PF1EL.Sel.Picker.SortDefaultHint">
+          <i class="fa-solid fa-arrow-down-short-wide"></i> {{localize "PF1EL.Sel.Picker.SortDefault"}}
+        </button>
+        <button type="button" class="{{#if sortAlpha}}active{{/if}}" data-action="sortAlpha" data-tooltip="PF1EL.Sel.Picker.SortAlphaHint">
+          <i class="fa-solid {{alphaIcon}}"></i> {{localize "PF1EL.Sel.Picker.SortAlpha"}}
+        </button>
+      </div>
+    </div>
+  </header>
+
+  {{#if empty}}
+  <p class="hint">{{localize "PF1EL.Sel.Picker.Empty"}}</p>
+  {{/if}}
+
+  <ol class="pf1el-picker-list">
+    {{#each entries}}
+    <li class="pf1el-picker-option{{#if failed}} failed{{/if}}{{#if blocked}} blocked{{/if}}{{#if chosen}} chosen{{/if}}" data-action="choose" data-uuid="{{uuid}}" data-name="{{name}}">
+      <img src="{{img}}" alt="">
+      <div class="pf1el-picker-text">
+        <span class="pf1el-picker-name">{{name}}{{#if note}} <em>({{note}})</em>{{/if}}</span>
+        {{#if summary}}<span class="pf1el-picker-summary">{{summary}}</span>{{/if}}
+      </div>
+      {{#if levelLabel}}<span class="pf1el-picker-level">{{levelLabel}}</span>{{/if}}
+      <a class="pf1el-picker-view" data-action="view" data-tooltip="PF1EL.Sel.Picker.View"><i class="fa-solid fa-book"></i></a>
+    </li>
+    {{/each}}
+  </ol>
+
+  <footer class="pf1el-picker-foot">
+    <button type="button" data-action="confirm"{{#unless canConfirm}} disabled{{/unless}}>
+      <i class="fa-solid fa-check"></i> {{localize "PF1EL.Sel.Picker.Confirm"}}
+    </button>
+  </footer>
+</div>

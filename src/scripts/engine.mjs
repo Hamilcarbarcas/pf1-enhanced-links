@@ -17,8 +17,10 @@
  * and let a reload reconcile without duplicating.
  *
  * Only the primary GM client runs the engine, so grants aren't created N times
- * across connected clients. If no GM is present, changes are simply reconciled
- * the next time a GM is active and an event fires.
+ * across connected clients. With no GM connected, the client of the user who made
+ * the change runs it for that actor instead: every write here is owner-level, and
+ * no other client is running the engine to race it. A class level change with no
+ * GM connected still waits, since its hook carries no user.
  */
 
 import {
@@ -33,6 +35,8 @@ import {
 } from "./enhanced-links.mjs";
 import { SCRIPT_TAB, scriptsFor, runCreateScripts } from "./create-scripts.mjs";
 import { dedupeEnabled, dataKeys, findExisting, isManaged, referencers } from "./dedupe.mjs";
+import { hasSpellcasting, hasSpellcastingLedger, listTagOf, reconcileSpellcasting } from "./spellcasting.mjs";
+import { PICKS_FLAG, classTagFor, isDormant, pickedGrants, settleSelections, slotsOf } from "./selections.mjs";
 
 const LOG = "PF1 Enhanced Links |";
 const MAX_PASSES = 10;
@@ -52,6 +56,11 @@ const POOL_SYNC = "pf1elPoolSync";
 // by our own create/delete calls are ignored (re-entry guard).
 const busy = new Set();
 
+// Actors whose picks changed while their reconcile was running, with the user who
+// changed them. The engine never writes picks, so such a change is always a user's,
+// and it is reconciled once the run in progress ends.
+const rerun = new Map();
+
 // Ids of items the system is cascade-deleting with a removed parent. Settle leaves
 // them alone rather than racing that delete.
 const cascading = new Set();
@@ -62,6 +71,15 @@ const CASCADE_MS = 5_000;
 /** Only the primary GM client mutates, to avoid duplicate grants across clients. */
 function isPrimaryGM() {
   return game.users?.activeGM?.isSelf === true;
+}
+
+/**
+ * Whether this client runs the engine for an actor: the primary GM, or with no GM
+ * connected, the user whose own change started it.
+ */
+function mayReconcile(actor, userId) {
+  if (isPrimaryGM()) return true;
+  return !game.users?.activeGM && !!userId && userId === game.user?.id && actor.isOwner === true;
 }
 
 /** Normalize a uuid for comparison (relative vs absolute forms). */
@@ -290,9 +308,13 @@ async function buildDesired(actor, parent, resolve) {
     let gateQty;
     let bookId;
     let needsSpelllikeBook = false;
+    // The class whose list sets the spell's level: the book's own, unless a
+    // granted book reads another class's list. DESIGN.md § Feature 6.
+    let listTag = tag;
     if (cfg.mode === MODE.class) {
       gateQty = clvl;
       bookId = tag ? findSpellbookByClass(actor, tag) : null;
+      if (bookId) listTag = listTagOf(actor, bookId) ?? tag;
     } else {
       gateQty = hdTotal(actor);
       bookId = "spelllike";
@@ -308,7 +330,7 @@ async function buildDesired(actor, parent, resolve) {
     let castable = true;
     if (cfg.mode === MODE.class && cfg.requireCastable && bookId != null) {
       const source = await resolve(uuid);
-      castable = !!source && canCastLevel(actor, bookId, resolveSpellLevel(source, tag, cfg.mode));
+      castable = !!source && canCastLevel(actor, bookId, resolveSpellLevel(source, listTag, cfg.mode));
     }
 
     out.push({
@@ -324,7 +346,7 @@ async function buildDesired(actor, parent, resolve) {
         buildSpell(
           uuid,
           bookId,
-          tag,
+          listTag,
           cfg.mode,
           parent.id,
           perDay,
@@ -334,6 +356,27 @@ async function buildDesired(actor, parent, resolve) {
         ),
     });
   }
+
+  // Feature 7: picks. Wanted while the feature is on the actor; a level-down takes
+  // the feature itself, and the system's cascade its picks. DESIGN.md § Feature 7.
+  pickedGrants(parent).forEach((pick, index) => {
+    out.push({
+      source: pick.uuid,
+      threshold: 0,
+      kind: "selection",
+      met: true,
+      build: async () => {
+        const data = await buildClassFeature(pick.uuid, pick.tag, parent.id);
+        if (!data) return data;
+        // A feat with no class of its own: the picked item says which class it is for.
+        if (!pick.tag) data.system.class = classTagFor(actor, data) ?? "";
+        // Listed where the granting feature is, just after it and in pick order. `sort`
+        // survives the feature moving to another category, so this needs no timing.
+        data.sort = (parent.sort ?? 0) + 1 + index;
+        return data;
+      },
+    });
+  });
 
   return out;
 }
@@ -401,6 +444,8 @@ async function enforceArchetypes(actor) {
 
 /** Whether an item hosts any Enhanced Links configuration. */
 function isConfiguredParent(item) {
+  if (hasSpellcasting(item)) return true;
+  if (slotsOf(item).length) return true;
   const cf = item.getFlag(MODULE_ID, "classFeatures");
   if (Array.isArray(cf) && cf.length) return true;
   const ss = item.getFlag(MODULE_ID, "spellSupplements");
@@ -539,6 +584,11 @@ async function reconcileParent(actor, parent, resolve) {
       const rec = ledger[item.id];
       if (rec) rec.also = [...(rec.also ?? []), d.source];
       else ledger[item.id] = ledgerRecord(d);
+      // A pick belongs to its slot even when the item was already on the actor.
+      if (d.kind === "selection") {
+        const links = editChildLinks();
+        if (!links.some((l) => linkTargetId(l) === item.id)) links.push({ uuid: item.getRelativeUUID(actor) });
+      }
       fresh.push([item, d]);
       changed = true;
     };
@@ -559,8 +609,8 @@ async function reconcileParent(actor, parent, resolve) {
       const built = await d.build();
       if (!built) continue;
 
-      // Class features: one the actor already has is shared, not copied.
-      if (dedupe && d.kind === "classFeature") {
+      // Class features and picks: one the actor already has is shared, not copied.
+      if (dedupe && (d.kind === "classFeature" || d.kind === "selection")) {
         const existing = findExisting(actor, built);
         if (existing && !cascading.has(existing.id)) {
           reference(existing, d);
@@ -620,6 +670,8 @@ async function reconcileParent(actor, parent, resolve) {
 
   // Create scripts run once the ledger is written, still inside the re-entry guard.
   for (const [child, d] of fresh) {
+    // A selection row carries no create scripts.
+    if (d.kind === "selection") continue;
     const kind = d.kind === "classFeature" ? SCRIPT_TAB.classFeatures : SCRIPT_TAB.spellSupplements;
     await runCreateScripts({ parent, child, kind, source: d.source });
   }
@@ -788,8 +840,10 @@ async function settleShared(actor) {
  * Reconcile every configured parent on the actor, looping to a fixpoint so that
  * cascading grants (a grant that is itself a parent) settle within one event.
  */
-async function reconcileActor(actor) {
-  if (!(actor instanceof Actor) || !game.ready || !isPrimaryGM()) return;
+async function reconcileActor(actor, { userId = null, force = false } = {}) {
+  if (!(actor instanceof Actor) || !game.ready) return;
+  // Paused for uninstall, the engine runs only when the uninstall menu asks it to.
+  if (!force && (isDormant() || !mayReconcile(actor, userId))) return;
   if (busy.has(actor.id)) return;
 
   busy.add(actor.id);
@@ -809,6 +863,11 @@ async function reconcileActor(actor) {
       }
       if (await settleSpelllike(actor)) changed = true;
       if (await settleShared(actor)) changed = true;
+      // Spellcasting terms, targets and the choice action. DESIGN.md § Feature 6.
+      if (await reconcileSpellcasting(actor)) changed = true;
+      // What follows from the picks: the Choose action, counts, the description
+      // line, and where a filled feature sits. DESIGN.md § Feature 7.
+      if (await settleSelections(actor, { skip: cascading, dormant: isDormant() })) changed = true;
       if (changed) dirty = true;
       if (!changed) return;
       if (pass === MAX_PASSES - 1) {
@@ -822,6 +881,11 @@ async function reconcileActor(actor) {
     // All engine CRUD runs render:false to avoid flashing mid-churn; re-render the
     // actor's open sheets once at the end so grants appear without a reopen.
     if (dirty) actor.render(false);
+    if (rerun.has(actor.id)) {
+      const by = rerun.get(actor.id);
+      rerun.delete(actor.id);
+      reconcileActor(actor, { userId: by });
+    }
   }
 }
 
@@ -919,17 +983,24 @@ Hooks.on("pf1ClassLevelChange", (actor) => {
 });
 
 // A configured parent was added (mid-campaign drop, or ungated grants on arrival).
-Hooks.on("createItem", (item) => {
+Hooks.on("createItem", (item, options, userId) => {
   const actor = item.actor;
   if (!(actor instanceof Actor) || busy.has(actor.id)) return;
-  if (isConfiguredParent(item)) reconcileActor(actor);
+  if (isConfiguredParent(item)) reconcileActor(actor, { userId });
 });
 
 // Config edited on an item already on the actor (levels, mode, gating, entries).
-Hooks.on("updateItem", (item, changed) => {
+Hooks.on("updateItem", (item, changed, options, userId) => {
   const actor = item.actor;
-  if (!(actor instanceof Actor) || busy.has(actor.id)) return;
-  if (foundry.utils.hasProperty(changed, `flags.${MODULE_ID}`)) reconcileActor(actor);
+  if (!(actor instanceof Actor)) return;
+  if (busy.has(actor.id)) {
+    if (foundry.utils.hasProperty(changed, `flags.${MODULE_ID}.${PICKS_FLAG}`)) rerun.set(actor.id, userId);
+    return;
+  }
+  // The associated class is what every class-tied link and Advance row keys on.
+  if (foundry.utils.hasProperty(changed, `flags.${MODULE_ID}`) || foundry.utils.hasProperty(changed, "system.class")) {
+    reconcileActor(actor, { userId });
+  }
 });
 
 // A spellbook was reconfigured. Caster type, preparation mode, the auto-CL formula
@@ -938,36 +1009,47 @@ Hooks.on("updateItem", (item, changed) => {
 // spells block; reconcile is idempotent, so a redundant pass costs only a scan.
 // (A caster level changed purely by an ItemChange is derived during prep and issues
 // no actor update, so it is not covered here — the next real event catches it.)
-Hooks.on("updateActor", (actor, changed) => {
+Hooks.on("updateActor", (actor, changed, options, userId) => {
   if (busy.has(actor.id)) return;
-  if (foundry.utils.hasProperty(changed, "system.attributes.spells")) reconcileActor(actor);
+  if (foundry.utils.hasProperty(changed, "system.attributes.spells")) reconcileActor(actor, { userId });
 });
 
 // An item was removed. An archetype restores what it replaced; a grant
 // hand-deleted while its parent survives re-heals. Parent-deletion teardown of
 // grants needs nothing here: every grant is child-linked, so the system's own
 // cascade (Actor#_onDeleteDescendantDocuments) removes them all with the parent.
-Hooks.on("deleteItem", async (item) => {
+Hooks.on("deleteItem", async (item, options, userId) => {
   const actor = item.actor;
-  if (!(actor instanceof Actor) || !game.ready || !isPrimaryGM() || busy.has(actor.id)) return;
+  if (!(actor instanceof Actor) || !game.ready) return;
+
+  // A removed parent's children are the system cascade's to delete. Noted first, on
+  // every path: a reconcile already running must leave them alone too, or it writes
+  // to an item whose delete is in flight and the server rejects the whole update.
+  const removedParent = hasLedger(item);
+  if (removedParent) {
+    const ids = (item.system?.links?.children ?? []).map(linkTargetId).filter(Boolean);
+    for (const id of ids) cascading.add(id);
+    setTimeout(() => ids.forEach((id) => cascading.delete(id)), CASCADE_MS);
+  }
+  if (isDormant() || !mayReconcile(actor, userId) || busy.has(actor.id)) return;
 
   // Restore base features a removed archetype was suppressing.
   await restoreReplacedFeatures(actor, item);
 
-  // A removed parent: its own children are the system cascade's to delete, but a
-  // spell-like spell it shared with other parents must lose its contribution.
-  if (hasLedger(item)) {
-    const ids = (item.system?.links?.children ?? []).map(linkTargetId).filter(Boolean);
-    for (const id of ids) cascading.add(id);
-    setTimeout(() => ids.forEach((id) => cascading.delete(id)), CASCADE_MS);
-    reconcileActor(actor);
+  // The cascade takes the removed parent's own children, but a spell-like spell it
+  // shared with other parents must lose its contribution.
+  if (removedParent) {
+    reconcileActor(actor, { userId });
     return;
   }
+
+  // A removed feature's spellcasting terms come back out of the books it advanced.
+  if (hasSpellcastingLedger(actor, item.id)) return void reconcileActor(actor, { userId });
 
   // A grant hand-deleted while its parent still lives → re-heal (the gate may still
   // be met). If the parent is gone this was cascade teardown — nothing to do.
   const parentId = item.getFlag(MODULE_ID, GRANT_PARENT);
-  if (parentId && actor.items.get(parentId)) reconcileActor(actor);
+  if (parentId && actor.items.get(parentId)) reconcileActor(actor, { userId });
 });
 
 // Pooled spell-like spells share one count: a change to one's uses left (a cast,
@@ -995,4 +1077,18 @@ Hooks.on("updateItem", (item, changed, options, userId) => {
 });
 
 // Expose for console debugging alongside the Phase 1 accessors.
+/**
+ * Reconcile an actor on this client now, whoever the primary GM is and whether or
+ * not the module is paused, and resolve once it has settled. For the uninstall menu.
+ */
+export async function reconcileForced(actor) {
+  const idle = async () => {
+    while (busy.has(actor.id)) await new Promise((resolve) => setTimeout(resolve, 50));
+  };
+  // A run already under way would make this one return at once.
+  await idle();
+  await reconcileActor(actor, { userId: game.user.id, force: true });
+  await idle();
+}
+
 globalThis.pf1EnhancedLinks = { ...(globalThis.pf1EnhancedLinks ?? {}), reconcileActor };

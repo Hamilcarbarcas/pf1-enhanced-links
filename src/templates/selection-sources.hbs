@@ -1,0 +1,41 @@
+<section class="pf1el-sources-body">
+  <p class="hint">{{localize "PF1EL.Sources.Intro"}}</p>
+
+  <fieldset>
+    <legend>{{localize "PF1EL.Sources.Core.Legend"}}</legend>
+    <div class="form-group">
+      <label for="pf1el-sources-core-mode">{{localize "PF1EL.Sources.Core.Mode"}}</label>
+      <div class="form-fields">
+        <select id="pf1el-sources-core-mode" name="core.mode">
+          {{selectOptions coreModes selected=core.mode localize=true}}
+        </select>
+      </div>
+    </div>
+    <div class="form-group stacked">
+      <label for="pf1el-sources-core-tags">{{localize "PF1EL.Sources.Core.Tags"}}</label>
+      <textarea id="pf1el-sources-core-tags" name="core.tags" rows="5" placeholder="Rage Power">{{coreTags}}</textarea>
+      <p class="hint">{{localize "PF1EL.Sources.Core.TagsHint"}}</p>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>{{localize "PF1EL.Sources.Packs.Legend"}}</legend>
+    <div class="form-group">
+      <label for="pf1el-sources-pack-mode">{{localize "PF1EL.Sources.Packs.Mode"}}</label>
+      <div class="form-fields">
+        <select id="pf1el-sources-pack-mode" name="packs.mode">
+          {{selectOptions packModes selected=packMode localize=true}}
+        </select>
+      </div>
+    </div>
+    <div class="pf1el-sources-packs">
+      {{#each packs}}
+      <label class="pf1el-sources-pack">
+        <input type="checkbox" name="packs.ids" value="{{id}}" {{checked on}}>
+        <span>{{label}}</span>
+        <span class="pf1el-sources-pack-id">{{id}}</span>
+      </label>
+      {{/each}}
+    </div>
+  </fieldset>
+</section>

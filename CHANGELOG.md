@@ -75,6 +75,59 @@
   already has (same source, or same type and tag). The new parent shares the existing
   item and runs its create scripts on it. A shared item stays until the last parent
   that granted it is removed. Physical items and spells are still copied as before.
+- **Spellcasting on features**: a new Spellcasting section on the Details tab of
+  feats, class features, and races.
+  - **Grant a spellbook**: the item gives the actor a spellbook while it is on the
+    actor, with the same settings a class has, plus its own book name, a choice of
+    class level or Hit Dice, and a spell list that can differ from the class whose
+    levels it counts (a rogue archetype casting from the wizard list).
+  - **Modify the class's spellbook**: a class feature changes its own class's
+    spellbook while it is on the actor: casting ability, type, progression,
+    cantrips, domain slots, spell list, and offsets to caster level and spells per
+    day (diminished spellcasting). Everything is put back when the feature leaves.
+  - **Advance other spellcasting**: each row adds the feature's class levels to
+    another spellbook, as a prestige class does. Pick the kind of spellbook and
+    which class levels count (every level, every level except, or only at). On an
+    actor a single matching spellbook is advanced automatically. With several, the
+    feature gains a Choose Spellcasting action to pick one. The levels are removed
+    again with the feature. Psionic manifesters can be advanced when PF1 Psionics
+    supports it.
+- **Selections** (in progress): a new Selections section on a feat's Details tab,
+  for features that give a pick from a list, such as a rage power or a rogue
+  talent. A Role choice sets whether the item grants picks, can be picked, or
+  both. A granting item names the tags it draws from and can list extra items or
+  folders. An item that can be picked can carry a minimum level, required items,
+  an exclusive group, and a summary.
+  - On an actor's sheet, a feature with a pick to make is colored and gains a
+    Choose tag, and a Choose Selection action. Either opens a list that can be
+    filtered by name, sorted (available first by level, or alphabetical), and
+    trimmed to what can be picked. The picked item is added as a child of the
+    feature, and a pick can be undone from either item's Selections section.
+  - When two listed items share a name, the one in the world, then a world
+    compendium, then a module's compendium is offered ahead of the system's.
+  - A **Selection Sources** settings menu limits which tags the system
+    compendiums are searched for, and which compendiums are searched at all.
+  - An item that fails a rule is listed dimmed with the reason. A GM can still
+    pick it. The minimum level is judged against the level the granting feature
+    was gained at.
+  - A feature's description gains a Chosen line linking each pick to the item it
+    was taken from.
+  - A feature with every pick made moves to a new **Hidden Features** category
+    at the bottom of the Features tab, or to one another module names. A new
+    setting leaves that category off players' sheets. A feature marked Keep in
+    place stays put. A general feat steps
+    aside only when a general feat was picked in its place, so the feat count
+    stays right.
+- **Prepare for Uninstall** settings menu: undo every pick, or move the features
+  the module hid to Misc, before turning the module off. Either pauses the
+  module, and Undo preparation resumes it.
+- With no GM connected, the engine now runs on the client of the player who made
+  the change, so linked items and picks arrive without waiting for a GM. A class
+  level change made with no GM connected still waits for one.
+
+### Changed
+- **lib-wrapper is now required** (it was recommended).
+- Changing an on-actor feature's associated class now re-runs its links.
 
 ### Fixed
 - A grant pass that created several items paired them with their rows by position,

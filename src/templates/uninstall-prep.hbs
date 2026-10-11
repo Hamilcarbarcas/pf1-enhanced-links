@@ -1,0 +1,34 @@
+<section class="pf1el-uninstall-body">
+  <p>{{localize "PF1EL.Uninstall.Intro"}}</p>
+
+  {{#if dormant}}
+  <p class="pf1el-uninstall-paused"><i class="fa-solid fa-circle-pause"></i> {{localize "PF1EL.Uninstall.Paused"}}</p>
+  {{/if}}
+
+  <p class="pf1el-uninstall-found">{{found}}</p>
+
+  <div class="pf1el-uninstall-choice">
+    <button type="button" data-action="undo" {{disabled working}}>
+      <i class="fa-solid fa-rotate-left"></i> {{localize "PF1EL.Uninstall.Undo.Label"}}
+    </button>
+    <p class="hint">{{localize "PF1EL.Uninstall.Undo.Hint"}}</p>
+  </div>
+
+  <div class="pf1el-uninstall-choice">
+    <button type="button" data-action="park" {{disabled working}}>
+      <i class="fa-solid fa-box-archive"></i> {{localize "PF1EL.Uninstall.Park.Label"}}
+    </button>
+    <p class="hint">{{localize "PF1EL.Uninstall.Park.Hint"}}</p>
+  </div>
+
+  {{#if canRestore}}
+  <div class="pf1el-uninstall-choice">
+    <button type="button" data-action="restore" {{disabled working}}>
+      <i class="fa-solid fa-play"></i> {{localize "PF1EL.Uninstall.Restore.Label"}}
+    </button>
+    <p class="hint">{{localize "PF1EL.Uninstall.Restore.Hint"}}</p>
+  </div>
+  {{/if}}
+
+  <p class="hint">{{localize "PF1EL.Uninstall.Scope"}}</p>
+</section>

@@ -20,21 +20,33 @@
         "type": "system"
       }
     ],
-    "recommends": [
+    "requires": [
       {
         "id": "lib-wrapper",
+        "type": "module"
+      }
+    ],
+    "recommends": [
+      {
+        "id": "pf1-new-script-hooks",
         "type": "module",
-        "reason": "Enables flash-free prevention of archetype-replaced class features on level-up. Without it, replaced features are removed reactively instead."
+        "reason": "Lets the Choose Spellcasting and Choose Selection actions open their prompts directly. Without it, PF1's use dialog appears first."
       }
     ]
   },
   "esmodules": [
     "src/scripts/enhanced-links.mjs",
     "src/scripts/engine.mjs",
-    "src/scripts/supplements.mjs"
+    "src/scripts/supplements.mjs",
+    "src/scripts/spellcasting-sheet.mjs",
+    "src/scripts/selections-sheet.mjs",
+    "src/scripts/selections-sources.mjs",
+    "src/scripts/selections-picker.mjs",
+    "src/scripts/uninstall.mjs"
   ],
   "styles": [
-    "src/styles/enhanced-links.css"
+    "src/styles/enhanced-links.css",
+    "src/common/sheet/kit.css"
   ],
   "languages": [
     {
