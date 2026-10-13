@@ -28,6 +28,13 @@ const LOG = "PF1 Enhanced Links |";
 const MARKER = "pf1el-cast";
 const ICON = "fa-solid fa-hat-wizard";
 
+/** PF1 Enhanced Spellbooks, which owns slot rules. This section only opens its editor. */
+const SPELLBOOKS = "pf1-enhanced-spellbooks";
+const spellbooksApi = () => (game.modules.get(SPELLBOOKS)?.active ? game.modules.get(SPELLBOOKS).api ?? null : null);
+
+/** How many slot rules an item carries, or 0 when the other module is absent. */
+const slotRuleCount = (item) => spellbooksApi()?.getItemRules?.(item)?.length ?? 0;
+
 const t = (key) => game.i18n.localize(key);
 const esc = (s) => foundry.utils.escapeHTML(String(s ?? ""));
 
@@ -175,6 +182,27 @@ function grantMarkup(item, cfg, editable) {
     </div>`;
 }
 
+/** The Special slots block: a way into the other module's rule editor. Class-tied items only. */
+function slotsMarkup(item) {
+  if (!spellbooksApi()?.openRules || !canClassTie(item)) return "";
+  const label = game.i18n.format("PF1EL.Cast.Slots.Edit", { count: slotRuleCount(item) });
+  // Just the names: the other module's editor has the rest.
+  const names = spellbooksApi()?.getItemRuleNames?.(item) ?? [];
+  const list = names.length
+    ? `<ul class="${MARKER}-rule-names">${names.map((name) => `<li>${esc(name)}</li>`).join("")}</ul>`
+    : "";
+  return `
+    <div class="${MARKER}-sub">${t("PF1EL.Cast.Slots.Title")}</div>
+    <p class="notes">${t("PF1EL.Cast.Slots.Hint")}</p>
+    ${list}
+    <div class="form-group">
+      <label>${t("PF1EL.Cast.Slots.Label")}</label>
+      <div class="form-fields">
+        <button type="button" class="${MARKER}-slots"><i class="fa-solid fa-layer-group"></i> ${esc(label)}</button>
+      </div>
+    </div>`;
+}
+
 function rowMarkup(row, target, { editable, onActor }) {
   const dis = editable ? "" : " disabled";
   const kinds = KINDS.filter((k) => k !== "psionic" || psionicsActive() || row.kind === "psionic")
@@ -256,16 +284,18 @@ function sectionMarkup(item, editable) {
   <h3 class="form-header ${MARKER}-header"><i class="${ICON}"></i> ${t("PF1EL.Cast.Title")}</h3>
   <div class="${MARKER}-body">
     ${grantMarkup(item, cfg, editable)}
+    ${slotsMarkup(item)}
     ${advance}
   </div>
 </div>`;
 }
 
 /** What the section holds, for its header badge. */
-function badgeText(cfg) {
+function badgeText(cfg, slotRules = 0) {
   const parts = [];
   if (cfg.mode === "grant") parts.push(t("PF1EL.Cast.Badge.Book"));
   if (cfg.mode === "modify") parts.push(t("PF1EL.Cast.Badge.Modify"));
+  if (slotRules) parts.push(t("PF1EL.Cast.Badge.Slots"));
   if (cfg.advance.length) parts.push(cfg.advance.length);
   return parts.join(", ");
 }
@@ -275,7 +305,8 @@ function draw(app, tab, old = null) {
   const item = app.item;
   const editable = app.isEditable;
   const cfg = getSpellcasting(item);
-  const configured = !!cfg.mode || cfg.advance.length > 0;
+  const slotRules = slotRuleCount(item);
+  const configured = !!cfg.mode || cfg.advance.length > 0 || slotRules > 0;
   // Nothing to show on a sheet that can't be edited.
   if (!editable && !configured) return void old?.remove();
 
@@ -300,6 +331,11 @@ function draw(app, tab, old = null) {
     change(row);
     await saveRows(item, rows);
   };
+
+  section.querySelector(`.${MARKER}-slots`)?.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    spellbooksApi()?.openRules(item);
+  });
 
   section.querySelector(`.${MARKER}-add`)?.addEventListener("click", async (ev) => {
     ev.preventDefault();
@@ -378,7 +414,7 @@ function draw(app, tab, old = null) {
     key: "spellcasting",
     marker: MARKER,
     configured,
-    badge: badgeText(cfg),
+    badge: badgeText(cfg, slotRules),
     title: t("PF1EL.Cast.Toggle"),
   });
 }

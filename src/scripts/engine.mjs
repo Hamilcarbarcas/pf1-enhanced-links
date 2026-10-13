@@ -48,6 +48,10 @@ const GRANT_SOURCE = "grantSource"; // on child: source uuid it was built from
 const POOL = POOL_FLAG;
 const SCRIPTED = "scripted"; // on child: its row has create scripts, so it never stacks
 const DOMAIN_STAMP = "domain"; // on child: the Domain/School setting last applied to it
+const KNOWN_STAMP = "bonusKnown"; // on child: it doesn't count against its book's spells known
+// The addend this module keeps in a spell level's known offset, one per bonus spell there.
+const KNOWN_TERM = "Bonus spells known";
+const KNOWN_TERM_RE = /^\d+\[Bonus spells known\]$/;
 
 // Update option marking the pool sync's own writes.
 const POOL_SYNC = "pf1elPoolSync";
@@ -65,6 +69,10 @@ const rerun = new Map();
 // them alone rather than racing that delete.
 const cascading = new Set();
 const CASCADE_MS = 5_000;
+
+// Class deletions in progress: actor id -> { ids: items still to go, userId, timer }.
+// The engine stands down for the actor until they are all gone. DESIGN.md § Feature 3.
+const teardowns = new Map();
 
 // ─── Guards ─────────────────────────────────────────────────────────────────────
 
@@ -203,7 +211,78 @@ async function buildClassFeature(uuid, tag, parentId) {
   return data;
 }
 
-async function buildSpell(uuid, bookId, tag, mode, parentId, perDay = 0, poolKey = null, scripted = false, domain = false) {
+/** Top-level `+` addends of a formula. A lone "0" counts as empty. */
+function formulaAddends(formula) {
+  const out = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of String(formula ?? "")) {
+    if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth--;
+    if (ch === "+" && depth === 0) {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim()).filter((s) => s && s !== "0");
+}
+
+/**
+ * Keep each spell level's known offset in step with the bonus spells granted there.
+ * DESIGN.md § Bonus spells known.
+ *
+ * On a spontaneous book the system counts every spell against the level's spells
+ * known. A granted spell stamped as a bonus adds one to that level's own
+ * `preparedOffsetFormula`, as a labeled addend this module owns and nothing else in
+ * the formula. The addend is the whole record: it is rewritten from the spells on the
+ * actor each pass, so there is no ledger to drift.
+ */
+async function settleKnownBonus(actor) {
+  const books = actor.system?.attributes?.spells?.spellbooks ?? {};
+  const want = new Map();
+  for (const spell of actor.itemTypes?.spell ?? []) {
+    if (spell.getFlag(MODULE_ID, KNOWN_STAMP) !== true || !spell.getFlag(MODULE_ID, GRANT_PARENT)) continue;
+    // A Domain/School spell is counted in the book's own pool for those.
+    if (spell.system?.domain === true) continue;
+    const bookId = spell.system?.spellbook;
+    if (books[bookId]?.spellPreparationMode !== "spontaneous") continue;
+    const key = `${bookId}.spell${spell.system.level}`;
+    want.set(key, (want.get(key) ?? 0) + 1);
+  }
+
+  const update = {};
+  for (const [bookId, book] of Object.entries(books)) {
+    for (let level = 0; level < 10; level++) {
+      const stored = actor._source.system?.attributes?.spells?.spellbooks?.[bookId]?.spells?.[`spell${level}`]?.preparedOffsetFormula ?? "";
+      const terms = formulaAddends(stored);
+      const others = terms.filter((term) => !KNOWN_TERM_RE.test(term));
+      const n = want.get(`${bookId}.spell${level}`) ?? 0;
+      // Untouched unless this module has, or needs, an addend here.
+      if (!n && others.length === terms.length) continue;
+      const next = [...others, ...(n ? [`${n}[${KNOWN_TERM}]`] : [])].join(" + ");
+      if (next !== terms.join(" + ")) {
+        update[`system.attributes.spells.spellbooks.${bookId}.spells.spell${level}.preparedOffsetFormula`] = next;
+      }
+    }
+  }
+  if (!Object.keys(update).length) return false;
+  await actor.update(update, { render: false });
+  return true;
+}
+
+async function buildSpell(
+  uuid,
+  bookId,
+  tag,
+  mode,
+  parentId,
+  perDay = 0,
+  poolKey = null,
+  scripted = false,
+  domain = false,
+  bonusKnown = false
+) {
   const built = await buildFromSource(uuid);
   if (!built) return null;
   const { source, data } = built;
@@ -217,6 +296,7 @@ async function buildSpell(uuid, bookId, tag, mode, parentId, perDay = 0, poolKey
     foundry.utils.setProperty(data, "system.domain", true);
     foundry.utils.setProperty(data, `flags.${MODULE_ID}.${DOMAIN_STAMP}`, true);
   }
+  if (bonusKnown) foundry.utils.setProperty(data, `flags.${MODULE_ID}.${KNOWN_STAMP}`, true);
 
   // Spell-like uses per day: a positive count sets prepared uses; 0 means at-will.
   if (mode === MODE.spelllike) {
@@ -342,6 +422,7 @@ async function buildDesired(actor, parent, resolve) {
       pool: poolId,
       stackable: spelllike && !poolId && !scripted,
       domain: cfg.mode === MODE.class && cfg.domain,
+      bonusKnown: cfg.mode === MODE.class && cfg.bonusKnown,
       build: () =>
         buildSpell(
           uuid,
@@ -352,7 +433,8 @@ async function buildDesired(actor, parent, resolve) {
           perDay,
           poolId ? `${parent.id}:${poolId}` : null,
           scripted,
-          cfg.mode === MODE.class && cfg.domain
+          cfg.mode === MODE.class && cfg.domain,
+          cfg.mode === MODE.class && cfg.bonusKnown
         ),
     });
   }
@@ -438,6 +520,169 @@ async function enforceArchetypes(actor) {
   if (!toDelete.length) return false;
   await actor.deleteEmbeddedDocuments("Item", toDelete, { render: false });
   return true;
+}
+
+/** Whether an item is an archetype: a feature with "Replaces class features" on. */
+function isArchetype(item) {
+  return getArchetype(item).replaces;
+}
+
+/**
+ * Child-link each archetype to the class it modifies, so deleting the class takes
+ * the archetype (and, through it, its grants) with it. An archetype some other item
+ * already parents is left alone, so one delete never decides it two ways. Only links
+ * to archetype-flagged items are removed, so hand-authored children survive.
+ * DESIGN.md § Feature 3.
+ */
+async function settleArchetypeLinks(actor) {
+  const classes = actor.itemTypes?.class ?? [];
+  if (!classes.length) return false;
+  const classIds = new Set(classes.map((c) => c.id));
+
+  // Children claimed by any non-class item.
+  const parentedElsewhere = new Set();
+  for (const p of actor.items) {
+    if (classIds.has(p.id)) continue;
+    for (const l of p.system?.links?.children ?? []) parentedElsewhere.add(linkTargetId(l));
+  }
+
+  const wanted = new Map(); // class id -> Set of archetype ids
+  for (const it of actor.items) {
+    if (!isArchetype(it) || cascading.has(it.id) || parentedElsewhere.has(it.id)) continue;
+    if (referencers(actor, it).size) continue;
+    const clsId = actor.classes?.[getAssociatedClass(it)]?._id;
+    if (!clsId || !classIds.has(clsId)) continue;
+    if (!wanted.has(clsId)) wanted.set(clsId, new Set());
+    wanted.get(clsId).add(it.id);
+  }
+
+  const updates = [];
+  for (const cls of classes) {
+    const want = wanted.get(cls.id) ?? new Set();
+    const links = cls.toObject().system?.links?.children ?? [];
+    const kept = links.filter((l) => {
+      const id = linkTargetId(l);
+      const target = actor.items.get(id);
+      return !target?.getFlag(MODULE_ID, "archetype") || want.has(id);
+    });
+    const have = new Set(kept.map(linkTargetId));
+    const added = [...want].filter((id) => !have.has(id));
+    if (!added.length && kept.length === links.length) continue;
+    for (const id of added) kept.push({ uuid: actor.items.get(id).getRelativeUUID(actor) });
+    updates.push({ _id: cls.id, "system.links.children": kept });
+  }
+
+  if (!updates.length) return false;
+  await actor.updateEmbeddedDocuments("Item", updates, { render: false });
+  return true;
+}
+
+// ─── Class teardown ─────────────────────────────────────────────────────────────
+
+/** Ids reachable from `ids` through child links, as the system's delete cascade walks them. */
+function childClosure(actor, ids) {
+  const out = new Set();
+  const queue = [...ids];
+  while (queue.length) {
+    const id = queue.pop();
+    const it = id && !out.has(id) ? actor.items.get(id) : null;
+    if (!it) continue;
+    out.add(id);
+    for (const l of it.system?.links?.children ?? []) queue.push(linkTargetId(l));
+  }
+  return out;
+}
+
+/**
+ * What a deleted class takes with it. `expected` is every item that should go:
+ * what the system deletes itself (the class's children and class associations,
+ * with their children) plus `sweep`, the rest, which this module deletes: the
+ * class's archetypes and the engine and Supplements items that hang off any of
+ * them without a child link. An item another surviving item still references
+ * stays. Called after the class has left `actor.items`.
+ */
+function classTeardown(actor, cls) {
+  const tag = cls.system?.tag;
+  const children = (cls.system?.links?.children ?? []).map(linkTargetId);
+  const assoc = Object.entries(cls.getFlag("pf1", "links.classAssociations") ?? {})
+    .filter(([, level]) => level > 0)
+    .map(([id]) => id);
+  const archetypes = tag
+    ? actor.items.filter((it) => isArchetype(it) && getAssociatedClass(it) === tag).map((it) => it.id)
+    : [];
+  const bySystem = childClosure(actor, [...children, ...assoc]);
+
+  // Everything related: through child links and ledgers.
+  const seeds = new Set([...children, ...assoc, ...archetypes]);
+  const related = new Set();
+  const queue = [...seeds];
+  while (queue.length) {
+    const id = queue.pop();
+    const it = id && !related.has(id) ? actor.items.get(id) : null;
+    if (!it) continue;
+    related.add(id);
+    for (const l of it.system?.links?.children ?? []) queue.push(linkTargetId(l));
+    queue.push(...Object.keys(it.getFlag(MODULE_ID, GRANTED) ?? {}));
+  }
+  const systemSeeds = new Set([...children, ...assoc]);
+  for (const id of [...related]) {
+    if (systemSeeds.has(id)) continue;
+    const refs = referencers(actor, actor.items.get(id));
+    if ([...refs].some((r) => !related.has(r))) related.delete(id);
+  }
+
+  const isArch = new Set(archetypes);
+  const sweep = [...related].filter((id) => {
+    if (bySystem.has(id)) return false;
+    const it = actor.items.get(id);
+    return isArch.has(id) || isManaged(it) || !!it.getFlag(MODULE_ID, GRANT_PARENT);
+  });
+  return { expected: new Set([...bySystem, ...sweep]), sweep };
+}
+
+/** Whether a class deletion is still clearing this actor (or, with an id, that item). */
+export function inTeardown(actor, itemId = null) {
+  const t = actor && teardowns.get(actor.id);
+  return !!t && (itemId === null || t.ids.has(itemId));
+}
+
+function endTeardown(actor) {
+  const t = teardowns.get(actor.id);
+  if (!t) return;
+  clearTimeout(t.timer);
+  teardowns.delete(actor.id);
+  // A run that stood down mid-pass picks this up from its own finally.
+  if (busy.has(actor.id)) rerun.set(actor.id, t.userId);
+  else reconcileActor(actor, { userId: t.userId });
+}
+
+/**
+ * A class was deleted. Every client stands its engine down for the actor until
+ * the class's related items are gone, so nothing is re-granted or relinked
+ * mid-delete. The deleting client also removes what the system's cascade won't.
+ */
+async function beginTeardown(actor, cls, userId) {
+  const { expected, sweep } = classTeardown(actor, cls);
+  if (!expected.size) return;
+  const prior = teardowns.get(actor.id);
+  if (prior) {
+    clearTimeout(prior.timer);
+    expected.forEach((id) => prior.ids.add(id));
+  }
+  const t = prior ?? { ids: expected, userId };
+  t.timer = setTimeout(() => endTeardown(actor), CASCADE_MS);
+  teardowns.set(actor.id, t);
+  for (const id of expected) cascading.add(id);
+  setTimeout(() => expected.forEach((id) => cascading.delete(id)), CASCADE_MS);
+
+  if (userId !== game.user.id) return;
+  const ids = sweep.filter((id) => actor.items.has(id));
+  if (!ids.length) return;
+  try {
+    await actor.deleteEmbeddedDocuments("Item", ids, { render: false });
+  } catch (err) {
+    console.error(LOG, "class teardown sweep failed on", actor.name, err);
+  }
 }
 
 // ─── Reconcile ──────────────────────────────────────────────────────────────────
@@ -546,6 +791,11 @@ async function reconcileParent(actor, parent, resolve) {
           if (stamp !== d.domain) {
             domainSync.push({ _id: itemId, "system.domain": d.domain, [`flags.${MODULE_ID}.${DOMAIN_STAMP}`]: d.domain });
           }
+        }
+        // The bonus-known stamp simply follows the checkbox. settleKnownBonus reads it.
+        if (d.kind === "spell" && d.bonusKnown !== undefined) {
+          const stamp = stillPresent.getFlag(MODULE_ID, KNOWN_STAMP) ?? false;
+          if (stamp !== d.bonusKnown) domainSync.push({ _id: itemId, [`flags.${MODULE_ID}.${KNOWN_STAMP}`]: d.bonusKnown });
         }
         // Some of the rows sharing this item still want it.
         if (keep.length !== recSources(rec).length) {
@@ -844,7 +1094,7 @@ async function reconcileActor(actor, { userId = null, force = false } = {}) {
   if (!(actor instanceof Actor) || !game.ready) return;
   // Paused for uninstall, the engine runs only when the uninstall menu asks it to.
   if (!force && (isDormant() || !mayReconcile(actor, userId))) return;
-  if (busy.has(actor.id)) return;
+  if (busy.has(actor.id) || teardowns.has(actor.id)) return;
 
   busy.add(actor.id);
   let dirty = false;
@@ -852,17 +1102,23 @@ async function reconcileActor(actor, { userId = null, force = false } = {}) {
   const resolve = makeSourceCache();
   try {
     for (let pass = 0; pass < MAX_PASSES; pass++) {
+      // A class deletion began mid-run; its own end reconciles.
+      if (teardowns.has(actor.id)) return;
       let changed = false;
       // Remove archetype-excluded base features first, so a replacement grant is
       // never created while the base it supersedes is still on the actor — that
       // overlap is what trips the system's duplicate-identifier check during prep.
       if (await enforceArchetypes(actor)) changed = true;
+      if (await settleArchetypeLinks(actor)) changed = true;
       // A ledger with no config left still has grants to tear down.
       for (const parent of actor.items.filter((it) => isConfiguredParent(it) || hasLedger(it))) {
+        if (teardowns.has(actor.id)) return;
+        if (cascading.has(parent.id) || !actor.items.has(parent.id)) continue;
         if (await reconcileParent(actor, parent, resolve)) changed = true;
       }
       if (await settleSpelllike(actor)) changed = true;
       if (await settleShared(actor)) changed = true;
+      if (await settleKnownBonus(actor)) changed = true;
       // Spellcasting terms, targets and the choice action. DESIGN.md § Feature 6.
       if (await reconcileSpellcasting(actor)) changed = true;
       // What follows from the picks: the Choose action, counts, the description
@@ -913,6 +1169,7 @@ async function restoreReplacedFeatures(actor, item) {
   const assoc = new Map((cls.system?.links?.classAssociations ?? []).map((a) => [uniformUuid(a.uuid), a]));
 
   const data = [];
+  const levels = [];
   for (const rawUuid of arch.excluded) {
     const u = uniformUuid(rawUuid);
     if (stillExcluded.has(u)) continue; // still replaced by another archetype
@@ -925,12 +1182,19 @@ async function restoreReplacedFeatures(actor, item) {
     if (!built) continue;
     foundry.utils.setProperty(built.data, "system.class", tag);
     data.push(built.data);
+    levels.push(level);
   }
 
-  if (!data.length) return;
+  // The class can go while sources load; restoring then would leave orphans.
+  if (!data.length || !actor.items.has(cls.id) || inTeardown(actor)) return;
   busy.add(actor.id);
   try {
-    await actor.createEmbeddedDocuments("Item", data, { render: false });
+    const created = await actor.createEmbeddedDocuments("Item", data, { render: false });
+    // Recorded as the system records its own grants, so a class level-down or
+    // deletion removes them too.
+    const update = {};
+    created.forEach((it, i) => (update[`flags.pf1.links.classAssociations.${it.id}`] = levels[i]));
+    if (actor.items.has(cls.id)) await cls.update(update, { render: false });
   } finally {
     busy.delete(actor.id);
   }
@@ -982,11 +1246,14 @@ Hooks.on("pf1ClassLevelChange", (actor) => {
   reconcileActor(actor);
 });
 
-// A configured parent was added (mid-campaign drop, or ungated grants on arrival).
+// A configured parent was added (mid-campaign drop, or ungated grants on arrival),
+// or an archetype or a class it can be linked under.
 Hooks.on("createItem", (item, options, userId) => {
   const actor = item.actor;
   if (!(actor instanceof Actor) || busy.has(actor.id)) return;
-  if (isConfiguredParent(item)) reconcileActor(actor, { userId });
+  const linksArchetype =
+    isArchetype(item) || (item.type === "class" && actor.items.some((it) => isArchetype(it)));
+  if (isConfiguredParent(item) || linksArchetype) reconcileActor(actor, { userId });
 });
 
 // Config edited on an item already on the actor (levels, mode, gating, entries).
@@ -1021,6 +1288,13 @@ Hooks.on("updateActor", (actor, changed, options, userId) => {
 Hooks.on("deleteItem", async (item, options, userId) => {
   const actor = item.actor;
   if (!(actor instanceof Actor) || !game.ready) return;
+
+  // A class takes its archetypes and everything hanging off either with it. Until
+  // that has all gone, nothing is restored, re-healed, or reconciled.
+  const t = teardowns.get(actor.id);
+  if (t?.ids.delete(item.id) && !t.ids.size) endTeardown(actor);
+  if (item.type === "class" && !isDormant()) beginTeardown(actor, item, userId);
+  if (teardowns.has(actor.id)) return;
 
   // A removed parent's children are the system cascade's to delete. Noted first, on
   // every path: a reconcile already running must leave them alone too, or it writes

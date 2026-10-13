@@ -76,6 +76,7 @@ Hooks.once("init", () => {
       label: "PF1EL.Sel.Category",
       filters: [{ type: "feat", subTypes: [OWN_CATEGORY] }],
       interface: { create: true, actions: true, types: true },
+      browse: { category: "feats", featType: [OWN_CATEGORY] },
       create: { type: "feat", system: { subType: OWN_CATEGORY } },
       // After Misc (15_000), at the bottom of the Features tab.
       sort: 20_000,

@@ -94,6 +94,7 @@ export function getSpellSupplements(item) {
     gated: raw.gated === true,
     requireCastable: raw.requireCastable !== false,
     domain: raw.domain === true, // class mode only: grants are Domain/School spells
+    bonusKnown: raw.bonusKnown === true, // class mode only: grants don't count against spells known
     items: Array.isArray(raw.items) ? foundry.utils.deepClone(raw.items) : [],
   };
 }
@@ -202,8 +203,7 @@ function byLevelThenName(a, b) {
  *
  * `sorted` orders the ROWS only — `index` still points at the entry's position in
  * the stored array, so delete/level edits stay correct without rewriting the flag.
- * The sort therefore lands on the next render of the panel (open, tab switch, drop,
- * delete); a level typed into a row doesn't yank it out from under the cursor.
+ * A level typed into a row is re-sorted separately, by resortRow().
  */
 async function resolveEntries(list, { sorted = false } = {}) {
   const rows = [];
@@ -225,6 +225,34 @@ async function resolveEntries(list, { sorted = false } = {}) {
   }
   if (sorted) rows.sort(byLevelThenName);
   return rows;
+}
+
+/** A level input's value as a whole number, 0 or more. */
+function readLevel(input) {
+  return Math.max(0, Math.floor(Number(input?.value) || 0));
+}
+
+/**
+ * Move one rendered row to its sorted slot after its level was edited. Only that
+ * row moves, so focus that has already landed on another row's input stays put.
+ */
+function resortRow(row) {
+  const body = row.parentNode;
+  if (!body) return; // the panel was refreshed out from under the row
+  const key = (tr) => ({
+    level: readLevel(tr.querySelector("input.el-level")),
+    name: tr.querySelector(".name")?.textContent.trim() ?? "",
+  });
+  const mine = key(row);
+  const others = [...body.querySelectorAll("tr.links-item")].filter((tr) => tr !== row);
+  const before = others.find((tr) => byLevelThenName(mine, key(tr)) < 0) ?? null;
+  if (row.nextElementSibling === before) return; // already in place
+
+  // Moving a node drops its focus, which it still holds if the window itself blurred.
+  const input = row.querySelector("input.el-level");
+  const refocus = document.activeElement === input;
+  body.insertBefore(row, before);
+  if (refocus) input.focus();
 }
 
 /**
@@ -363,6 +391,7 @@ async function buildContext(item, editable, kind) {
     // book is HD-driven and shares none, so the control only shows in class mode.
     requireCastable: cfg.requireCastable,
     domain: cfg.domain,
+    bonusKnown: cfg.bonusKnown,
     isClassMode: effectiveMode === MODE.class,
     isSpelllikeMode: effectiveMode === MODE.spelllike,
     // Ungated, the level column is hidden and the numbers are meaningless — leave
@@ -448,14 +477,17 @@ function wireControls(panel, ctx) {
   );
 
   // Level edits don't change structure and the input already shows the value, so
-  // we persist without refreshing (which would steal focus mid-edit).
-  panel.querySelectorAll("input.el-level").forEach((input) =>
+  // we persist without refreshing (which would steal focus mid-edit). A sorted list
+  // re-sorts the row once focus leaves it: `change` also fires on every spinner
+  // click, and moving the row then would pull it out from under the pointer.
+  const sorted = kind === "classFeatures" || getSpellSupplements(item).gated;
+  panel.querySelectorAll("input.el-level").forEach((input) => {
     input.addEventListener("change", async (ev) => {
       const index = Number(ev.currentTarget.dataset.index);
-      const level = Math.max(0, Math.floor(Number(ev.currentTarget.value) || 0));
-      await updateEntryLevel({ item, kind, index, level });
-    })
-  );
+      await updateEntryLevel({ item, kind, index, level: readLevel(ev.currentTarget) });
+    });
+    if (sorted) input.addEventListener("blur", (ev) => resortRow(ev.currentTarget.closest("tr.links-item")));
+  });
 
   if (kind === "spellSupplements") {
     panel.querySelector("select.el-mode")?.addEventListener("change", async (ev) => {
@@ -479,6 +511,11 @@ function wireControls(panel, ctx) {
     panel.querySelector("input.el-domain")?.addEventListener("change", async (ev) => {
       const cfg = getSpellSupplements(item);
       cfg.domain = ev.currentTarget.checked;
+      await setSpellSupplements(item, cfg);
+    });
+    panel.querySelector("input.el-bonus-known")?.addEventListener("change", async (ev) => {
+      const cfg = getSpellSupplements(item);
+      cfg.bonusKnown = ev.currentTarget.checked;
       await setSpellSupplements(item, cfg);
     });
     // Pooled entries share one Times/day: write it to every member and mirror the

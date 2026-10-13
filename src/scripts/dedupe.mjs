@@ -80,11 +80,15 @@ export function findExisting(actor, data) {
   if (!dedupable(data.type)) return null;
   const srcs = new Set(dataSources(data));
   const tag = dataTag(data);
+  const subType = data.system?.subType ?? null;
   return (
     actor.items.find((it) => {
       if (!dedupable(it.type)) return false;
+      // An item never stands in for its own supplement.
+      if ((it.system?.links?.supplements ?? []).some((s) => srcs.has(uniform(s.uuid)))) return false;
       if (sourceKeys(it).some((s) => srcs.has(s))) return true;
-      return !!tag && it.type === data.type && it.system?.tag === tag;
+      // A class feature and a feat can share a name, and so a tag.
+      return !!tag && it.type === data.type && (it.system?.subType ?? null) === subType && it.system?.tag === tag;
     }) ?? null
   );
 }

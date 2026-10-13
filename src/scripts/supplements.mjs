@@ -16,6 +16,7 @@
 
 import { MODULE_ID } from "./enhanced-links.mjs";
 import { SCRIPT_TAB, runCreateScripts } from "./create-scripts.mjs";
+import { inTeardown } from "./engine.mjs";
 import {
   CLAIMS,
   ALIASES,
@@ -199,6 +200,8 @@ Hooks.on("deleteItem", (item, _options, userId) => {
     for (const it of actor.items) {
       const claims = it.getFlag(MODULE_ID, CLAIMS);
       if (!Array.isArray(claims) || !claims.includes(item.id) || cascaded.has(it.id)) continue;
+      // A class deletion is removing it; writing to it would fail the whole batch.
+      if (inTeardown(actor, it.id)) continue;
 
       const remaining = referencers(actor, it, item.id);
       if (!remaining.size && isManaged(it)) {

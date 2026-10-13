@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- **Archetypes are children of their class**: deleting a class removes its archetypes, and
+  what they granted, through the system's delete cascade.
+- **Bonus spells known** checkbox on Spell Supplements: granted spells don't count against the
+  spells known of a class that has a set number, such as a sorcerer's bloodline spells.
+- **Spell rules** in the Spellcasting section of class features and feats, shown while PF1
+  Enhanced Spellbooks is active: a button that opens that module's rule editor for the item.
 - New **Class Features** sub-tab on the item Links tab: drop items and give each a
   level to grant them as class-associated children when the associated class
   reaches that level.
@@ -59,9 +65,9 @@
   updates the spell already on the actor instead of only affecting new grants.
 - **Auto-sort by level** for level-gated lists: Class Features, Spell Supplements
   with level gating enabled, and the archetype exclusion checklist are ordered by
-  gate level (ties by name). Sorting is display-only — the stored link order is
-  untouched — and applies whenever the panel renders, so editing a level saves
-  immediately but doesn't move the row out from under the cursor mid-edit.
+  gate level (ties by name). Sorting is display-only, so the stored link order is
+  untouched. Editing a level saves immediately, and the row moves to its new place
+  when you leave the field.
 - **Create scripts on links**: each row of Class Features, Spell Supplements and the
   system's Supplements tab can carry scripts (+ adds one) that run on the item when
   that link creates it. Useful for granting a
@@ -130,6 +136,18 @@
 - Changing an on-actor feature's associated class now re-runs its links.
 
 ### Fixed
+- A supplement sharing its parent's name (the Scribe Scroll class feature supplying the Scribe
+  Scroll feat) was taken for a duplicate of the parent and never created. Matching by tag now
+  also requires the same subtype, and an item never counts as a copy of its own supplement.
+- Deleting a class could leave its archetype's items behind or re-create them unlinked: the
+  system's cascades and the engine's own reactions raced, and one failed delete kept a whole
+  batch. The engine now stands down until the class, its archetypes, and everything they
+  granted are gone, deletes what the system's cascade doesn't reach, then settles once.
+- Base features restored when an archetype was removed weren't recorded as the class's
+  associations, so a later level-down or class deletion left them on the actor.
+- The Browse button on the module's own filled-features section threw `Could not find
+  "features" browser`. The section had no `browse` entry; it now opens the Feats browser
+  filtered to that type.
 - A grant pass that created several items paired them with their rows by position,
   so when the created items came back in another order a row's create scripts ran on
   a different row's item (Align Weapon's script renaming Forbid Action), and the

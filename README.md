@@ -18,10 +18,8 @@ item's sheet, exactly like the system's built-in link sections.
 
 Wherever a list is **level-gated**, it is sorted by level (ties by name): the Class
 Features tab, Spell Supplements with *Level gating* enabled, and the archetype
-exclusion checklist. The sort is applied when the tab is drawn, so a level you type
-saves right away but the row settles into its new place the next time the panel
-renders (reopening the sheet, switching sub-tabs, or adding/removing a row). The
-stored link order itself is never rewritten.
+exclusion checklist. A level you type saves right away, and the row moves to its new
+place when you leave the field. The stored link order itself is never rewritten.
 
 ### Class Features
 Drop items here and give each a **level**. When the item's associated class
@@ -36,6 +34,10 @@ granted on level-up and removed if already present — so a class feature that g
 its own replacements *and* replaces base features expresses an archetype end to
 end. (The base-class picker is required because a compendium feature doesn't yet
 know which class it belongs to.)
+
+On an actor, a feature with "Replaces class features" on becomes a child of its
+class, so deleting the class removes the archetype too, along with everything the
+archetype granted.
 
 ### Spell Supplements
 Drop **spells** here and pick a **destination**:
@@ -69,6 +71,14 @@ A **Domain/School spells** checkbox (Class Spellcasting only, off by default) ma
 every spell this item grants as a Domain/School spell, the same setting as on the
 spell's own sheet. Changing the checkbox later updates spells already on the actor.
 A spell you toggle by hand keeps your setting until the checkbox changes again.
+
+A **Bonus spells known** checkbox (Class Spellcasting only, off by default) is for a
+class that knows a set number of spells, such as a sorcerer or oracle. Spells this item
+grants then don't count against that number: each one adds one to the spells known of
+its own spell level, shown in the spellbook's settings as `1[Bonus spells known]` in
+that level's offset. It is added when the spell arrives and removed with it. Leave the
+book's **Domain/School Slots** at 0 for these. It has no effect on a class that
+prepares spells, or on spells also marked Domain/School.
 
 In **Spell-like Abilities** mode each spell also gets a **Times/day** value that
 sets its uses per day on the actor (0 = at-will). Changing it later updates the
@@ -152,7 +162,8 @@ same way: a feature the actor already has, for example from a class or another f
 is shared rather than granted a second time.
 
 - **Counts as already present:** the same source item, or an item of the same type
-  with the same identifier (tag). That's the clash PF1 warns about.
+  and subtype with the same identifier (tag). A class feature never counts as a copy
+  of the feat it supplies, even when both have the same name.
 - **Always copied:** physical items (two kits that each grant rope give two ropes)
   and spells.
 - **Removing one parent**, or one Class Features level gate dropping, leaves a shared
@@ -235,6 +246,20 @@ Notes:
 - If two features change the same setting, the later one wins and you get a warning.
   Removing the later one brings the earlier one's value back.
 - The class has to be on the actor and have a spellbook in use.
+
+### Spell rules
+
+With **PF1 Enhanced Spellbooks** active, the Spellcasting section of a class feature or feat has
+a **Spell rules** block. It lists the item's rules by name, and **Edit rules** opens that
+module's rule editor for the item. A slot
+rule names a group of domain or school slots and says which spells fill it, or makes matching
+spells cost extra slots. A substitution rule says which spells can be cast by giving up a
+different prepared spell. Both apply to the item's associated class while the item is on the
+actor. On a metamagic feat, the same editor holds what the metamagic does to a spell. See that
+module's README for what each holds.
+
+A slot rule does not change how many special slots the book has. Set **Domain/School Slots** above
+to the number the rules add up to.
 
 ### Advancing other spellcasting
 

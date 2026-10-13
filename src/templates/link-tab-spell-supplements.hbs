@@ -32,6 +32,11 @@
       <input type="checkbox" class="el-domain" {{#if domain}}checked{{/if}} {{#unless editable}}disabled{{/unless}}>
       <span>{{localize "PF1EL.Domain.Label"}}</span>
     </label>
+
+    <label class="el-control el-checkbox" data-tooltip="PF1EL.BonusKnown.Hint">
+      <input type="checkbox" class="el-bonus-known" {{#if bonusKnown}}checked{{/if}} {{#unless editable}}disabled{{/unless}}>
+      <span>{{localize "PF1EL.BonusKnown.Label"}}</span>
+    </label>
     {{/if}}
   </div>
 
