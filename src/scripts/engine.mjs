@@ -60,9 +60,9 @@ const POOL_SYNC = "pf1elPoolSync";
 // by our own create/delete calls are ignored (re-entry guard).
 const busy = new Set();
 
-// Actors whose picks changed while their reconcile was running, with the user who
-// changed them. The engine never writes picks, so such a change is always a user's,
-// and it is reconciled once the run in progress ends.
+// Actors whose picks or class levels changed while their reconcile was running, with
+// the user who changed them. The engine writes neither, so such a change is always a
+// user's, and it is reconciled once the run in progress ends.
 const rerun = new Map();
 
 // Ids of items the system is cascade-deleting with a removed parent. Settle leaves
@@ -1203,8 +1203,24 @@ async function restoreReplacedFeatures(actor, item) {
 
 // ─── Triggers ───────────────────────────────────────────────────────────────────
 
+const SOCKET = `module.${MODULE_ID}`;
+
+/** Reconcile now, or once the run in progress for the actor ends. */
+function requestReconcile(actor, userId) {
+  if (busy.has(actor.id)) rerun.set(actor.id, userId);
+  else reconcileActor(actor, { userId });
+}
+
+/** A player's client asking the primary GM to reconcile an actor. */
+function onSocket(msg) {
+  if (msg?.action !== "reconcile" || !isPrimaryGM()) return;
+  const actor = fromUuidSync(msg.actorUuid);
+  if (actor instanceof Actor) requestReconcile(actor, msg.userId);
+}
+
 Hooks.once("ready", () => {
   registerLevelUpFilter();
+  game.socket.on(SOCKET, onSocket);
   console.log(LOG, "engine ready");
 });
 
@@ -1242,8 +1258,13 @@ function registerLevelUpFilter() {
 }
 
 // Class level or HD changed (racial HD is a class item too, so HD gates ride this).
+// The system fires this only on the client that changed the level, after its
+// associations are added or removed; a player's client hands the run to the GM.
 Hooks.on("pf1ClassLevelChange", (actor) => {
-  reconcileActor(actor);
+  if (!(actor instanceof Actor)) return;
+  const userId = game.user.id;
+  if (mayReconcile(actor, userId)) requestReconcile(actor, userId);
+  else if (game.users.activeGM) game.socket.emit(SOCKET, { action: "reconcile", actorUuid: actor.uuid, userId });
 });
 
 // A configured parent was added (mid-campaign drop, or ungated grants on arrival),

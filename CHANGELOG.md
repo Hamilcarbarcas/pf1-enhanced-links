@@ -128,14 +128,17 @@
   the module hid to Misc, before turning the module off. Either pauses the
   module, and Undo preparation resumes it.
 - With no GM connected, the engine now runs on the client of the player who made
-  the change, so linked items and picks arrive without waiting for a GM. A class
-  level change made with no GM connected still waits for one.
+  the change, so linked items and picks arrive without waiting for a GM.
 
 ### Changed
 - **lib-wrapper is now required** (it was recommended).
 - Changing an on-actor feature's associated class now re-runs its links.
 
 ### Fixed
+- A player leveling up their own character often got none of the level's linked items, most
+  visibly an archetype's replacement feature at a level where it replaces the base one. The
+  system announces a level change only on the leveling player's client, so the GM's client
+  never heard of it. The player's client now passes it to the GM.
 - A supplement sharing its parent's name (the Scribe Scroll class feature supplying the Scribe
   Scroll feat) was taken for a duplicate of the parent and never created. Matching by tag now
   also requires the same subtype, and an item never counts as a copy of its own supplement.
