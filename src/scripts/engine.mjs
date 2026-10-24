@@ -36,7 +36,16 @@ import {
 import { SCRIPT_TAB, scriptsFor, runCreateScripts } from "./create-scripts.mjs";
 import { dedupeEnabled, dataKeys, findExisting, isManaged, referencers } from "./dedupe.mjs";
 import { hasSpellcasting, hasSpellcastingLedger, listTagOf, reconcileSpellcasting } from "./spellcasting.mjs";
-import { PICKS_FLAG, classTagFor, isDormant, pickedGrants, settleSelections, slotsOf } from "./selections.mjs";
+import {
+  GRANT_AS,
+  PICKS_FLAG,
+  classTagFor,
+  isDormant,
+  pickPerDay,
+  pickedGrants,
+  settleSelections,
+  slotsOf,
+} from "./selections.mjs";
 
 const LOG = "PF1 Enhanced Links |";
 const MAX_PASSES = 10;
@@ -441,7 +450,44 @@ async function buildDesired(actor, parent, resolve) {
 
   // Feature 7: picks. Wanted while the feature is on the actor; a level-down takes
   // the feature itself, and the system's cascade its picks. DESIGN.md § Feature 7.
-  pickedGrants(parent).forEach((pick, index) => {
+  const picks = pickedGrants(parent);
+  for (const [index, pick] of picks.entries()) {
+    const { row } = pick;
+    // A spell picked in a spell mode lands as Spell Supplements would land it.
+    // DESIGN.md § Spell picks.
+    const spellMode = row.grantAs && (await resolve(pick.uuid))?.type === "spell" ? row.grantAs : "";
+    if (spellMode === GRANT_AS.spelllike) {
+      out.push({
+        source: pick.uuid,
+        threshold: 0,
+        kind: "selection",
+        row: row.id,
+        grantAs: spellMode,
+        met: true,
+        needsSpelllikeBook: true,
+        stackable: true,
+        build: () =>
+          buildSpell(pick.uuid, "spelllike", "", MODE.spelllike, parent.id, pickPerDay(parent, row.id, pick.uuid) ?? 0),
+      });
+      continue;
+    }
+    if (spellMode === GRANT_AS.class) {
+      const classTag = pick.tag || classTagFor(actor, await resolve(pick.uuid)) || "";
+      const bookId = classTag ? findSpellbookByClass(actor, classTag) : null;
+      const listTag = bookId ? listTagOf(actor, bookId) ?? classTag : classTag;
+      out.push({
+        source: pick.uuid,
+        threshold: 0,
+        kind: "selection",
+        row: row.id,
+        grantAs: spellMode,
+        met: bookId != null,
+        domain: row.domain,
+        bonusKnown: row.bonusKnown,
+        build: () => buildSpell(pick.uuid, bookId, listTag, MODE.class, parent.id, 0, null, false, row.domain, row.bonusKnown),
+      });
+      continue;
+    }
     out.push({
       source: pick.uuid,
       threshold: 0,
@@ -458,7 +504,7 @@ async function buildDesired(actor, parent, resolve) {
         return data;
       },
     });
-  });
+  }
 
   return out;
 }
@@ -742,6 +788,8 @@ function findStack(actor, source) {
 function ledgerRecord(d) {
   const rec = { source: d.source, threshold: d.threshold, kind: d.kind };
   if (d.pool) rec.pool = d.pool;
+  if (d.row) rec.row = d.row;
+  if (d.grantAs) rec.grantAs = d.grantAs;
   return rec;
 }
 
@@ -780,20 +828,21 @@ async function reconcileParent(actor, parent, resolve) {
     } else {
       const keep = recSources(rec).filter((s) => {
         const d = bySource.get(s);
-        return d && d.met && (rec.pool ?? "") === (d.pool ?? "");
+        return d && d.met && (rec.pool ?? "") === (d.pool ?? "") && (rec.grantAs ?? "") === (d.grantAs ?? "");
       });
       if (keep.length) {
         // Domain/School follows the checkbox, but only when the checkbox changed, so
         // a spell toggled by hand stays as it is.
         const d = bySource.get(keep[0]);
-        if (d.kind === "spell" && d.domain !== undefined) {
+        // Class-spell picks carry both settings too. DESIGN.md § Spell picks.
+        if (d.domain !== undefined) {
           const stamp = stillPresent.getFlag(MODULE_ID, DOMAIN_STAMP) ?? false;
           if (stamp !== d.domain) {
             domainSync.push({ _id: itemId, "system.domain": d.domain, [`flags.${MODULE_ID}.${DOMAIN_STAMP}`]: d.domain });
           }
         }
         // The bonus-known stamp simply follows the checkbox. settleKnownBonus reads it.
-        if (d.kind === "spell" && d.bonusKnown !== undefined) {
+        if (d.bonusKnown !== undefined) {
           const stamp = stillPresent.getFlag(MODULE_ID, KNOWN_STAMP) ?? false;
           if (stamp !== d.bonusKnown) domainSync.push({ _id: itemId, [`flags.${MODULE_ID}.${KNOWN_STAMP}`]: d.bonusKnown });
         }
@@ -929,6 +978,17 @@ async function reconcileParent(actor, parent, resolve) {
 }
 
 /**
+ * A contributor's current Times/day for a spell-like spell, from its Spell
+ * Supplements entry or, for a pick, its selection row. Null when the entry is gone.
+ */
+function contributedPerDay(parent, rec) {
+  if (rec.kind === "selection") return pickPerDay(parent, rec.row, rec.source);
+  const target = uniformUuid(rec.source);
+  const entry = getSpellSupplements(parent).items.find((e) => uniformUuid(e.uuid) === target);
+  return entry ? entry.perDay ?? 0 : null;
+}
+
+/**
  * Derive every engine spell-like spell from the parents whose ledgers record it
  * (its contributors), reading their current config: uses, at will, the pool key,
  * and the child link. A spell nobody contributes to any more is deleted, unless
@@ -964,11 +1024,10 @@ async function settleSpelllike(actor) {
     let max = 0;
     let counted = 0;
     for (const { parent, rec } of contributors) {
-      const target = uniformUuid(rec.source);
-      const entry = getSpellSupplements(parent).items.find((e) => uniformUuid(e.uuid) === target);
-      if (!entry) continue;
+      const perDay = contributedPerDay(parent, rec);
+      if (perDay === null) continue;
       counted++;
-      const n = Math.max(0, Math.floor(Number(entry.perDay) || 0));
+      const n = Math.max(0, Math.floor(Number(perDay) || 0));
       if (n > 0) max += n;
       else atWill = true;
     }

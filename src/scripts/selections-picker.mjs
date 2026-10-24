@@ -3,6 +3,7 @@
 
 import { MODULE_ID } from "./enhanced-links.mjs";
 import {
+  GRANT_AS,
   PICKS_FLAG,
   SELECT_ACTION_ID,
   addPick,
@@ -72,14 +73,19 @@ class SelectionPicker extends HandlebarsApplicationMixin(ApplicationV2) {
     const override = game.user.isGM;
     const listed = catalog.map((entry) => {
       const notes = judged.get(entry.uuid) ?? [];
-      const level = entry.option.minLevel ?? 0;
+      // A spell in a spell mode shows its spell level in place of a minimum level.
+      const spell = entry.spellLevel !== null && entry.spellLevel !== undefined;
+      const level = spell ? entry.spellLevel : entry.option.minLevel ?? 0;
+      let levelLabel = "";
+      if (spell) levelLabel = game.i18n.format("PF1EL.Sel.Picker.SpellLevel", { n: level });
+      else if (level) levelLabel = game.i18n.format("PF1EL.Sel.Picker.Level", { n: level });
       return {
         uuid: entry.uuid,
         name: entry.name,
         img: entry.img,
         summary: entry.option.summary,
         level,
-        levelLabel: level ? game.i18n.format("PF1EL.Sel.Picker.Level", { n: level }) : "",
+        levelLabel,
         note: notes.join("; "),
         failed: notes.length > 0,
         blocked: notes.length > 0 && !override,
@@ -173,6 +179,8 @@ class SelectionPicker extends HandlebarsApplicationMixin(ApplicationV2) {
     const row = slotsOf(feature).find((s) => s.row.id === this.#rowId)?.row;
     if (!classIsOpen(feature, row)) return "";
     const source = await fromUuid(uuid).catch(() => null);
+    // The spell-like book has no class.
+    if (source?.type === "spell" && row?.grantAs === GRANT_AS.spelllike) return "";
     const eligible = source ? eligibleClasses(feature.actor, source) : [];
     if (eligible.length < 2) return eligible[0]?.system?.tag ?? "";
 

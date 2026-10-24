@@ -4,6 +4,7 @@
 import { MODULE_ID } from "./enhanced-links.mjs";
 import { makeCollapsible, setBadge } from "../common/sheet/collapse.mjs";
 import {
+  GRANT_AS,
   KEEP_FLAG,
   OPTION_FLAG,
   ROLE_FLAG,
@@ -13,6 +14,7 @@ import {
   getSelections,
   grantedItem,
   grantsPicks,
+  grantsSpells,
   hasOptionRules,
   hostsSelections,
   isDormant,
@@ -41,7 +43,12 @@ function save(item, changes) {
   return item.update(update, { render: false });
 }
 
-const newRow = () => ({ id: foundry.utils.randomID(8), label: "", tags: [], list: [], levelClass: "", count: 1 });
+const newRow = () => ({ id: foundry.utils.randomID(8), label: "", tags: [], list: [], levelClass: "", count: 1, grantAs: "" });
+
+// Fields saved as numbers, as checkboxes, or as a spell level where blank takes the default.
+const NUMBER_FIELDS = { count: 1, perDay: 0 };
+const CHECK_FIELDS = ["domain", "bonusKnown"];
+const SPELL_LEVEL_FIELDS = { spellMin: 0, spellMax: 9 };
 
 /** A stored uuid as a link to its item, a folder name, or a struck-out uuid when it is gone. */
 function entryMarkup(uuid) {
@@ -93,7 +100,56 @@ function picksMarkup(item, row, editable) {
 const group = (label, control, tooltip = "") =>
   `<div class="form-group"><label${tooltip ? ` data-tooltip="${tooltip}"` : ""}>${esc(t(label))}</label><div class="form-fields">${control}</div></div>`;
 
-function rowMarkup(item, row, { editable, tagList }) {
+/** How a row grants a picked spell, and the spell controls for that. DESIGN.md § Spell picks. */
+function spellMarkup(row, { editable, spellList, cell }) {
+  const dis = editable ? "" : " disabled";
+  const modes = [
+    [GRANT_AS.asIs, "PF1EL.Sel.GrantAs.asIs"],
+    [GRANT_AS.spelllike, "PF1EL.Sel.GrantAs.spelllike"],
+    [GRANT_AS.class, "PF1EL.Sel.GrantAs.class"],
+  ]
+    .map(([v, key]) => `<option value="${v}"${v === row.grantAs ? " selected" : ""}>${esc(t(key))}</option>`)
+    .join("");
+  const grantAs = cell("PF1EL.Sel.GrantAs.Label", `<select data-field="grantAs"${dis}>${modes}</select>`, "PF1EL.Sel.GrantAs.Hint");
+  if (!grantsSpells(row)) return `<div class="${MARKER}-line ${MARKER}-spell">${grantAs}</div>`;
+
+  const check = (field, label, hint) =>
+    `<label class="checkbox ${MARKER}-check" data-tooltip="${hint}"><input type="checkbox" data-field="${field}"${
+      row[field] ? " checked" : ""
+    }${dis}/> ${esc(t(label))}</label>`;
+  const settings =
+    row.grantAs === GRANT_AS.spelllike
+      ? cell("PF1EL.Field.PerDay", `<input type="number" data-field="perDay" value="${row.perDay}" min="0" step="1"${dis}>`, "PF1EL.PerDayHint")
+      : `<div class="${MARKER}-checks">${check("domain", "PF1EL.Domain.Label", "PF1EL.Domain.Hint")}${check(
+          "bonusKnown",
+          "PF1EL.BonusKnown.Label",
+          "PF1EL.BonusKnown.Hint"
+        )}</div>`;
+
+  const unlist = editable
+    ? ` <a class="${MARKER}-unspell" data-tooltip="PF1EL.Sel.Remove"><i class="fa-solid fa-xmark"></i></a>`
+    : "";
+  const chips = row.spellLists
+    .map((tag) => `<span class="${MARKER}-chip" data-spell-list="${esc(tag)}">${esc(tag)}${unlist}</span>`)
+    .join("");
+  const entry = editable
+    ? `<input type="text" class="${MARKER}-spell-entry" list="${spellList}" placeholder="${esc(t("PF1EL.Sel.AddSpellList"))}">`
+    : "";
+  const levels = `<span class="${MARKER}-levels">
+      <input type="number" data-field="spellMin" value="${row.spellMin}" min="0" max="9" step="1"${dis}>
+      <span>–</span>
+      <input type="number" data-field="spellMax" value="${row.spellMax}" min="0" max="9" step="1"${dis}>
+    </span>`;
+
+  return `
+      <div class="${MARKER}-line ${MARKER}-spell">${grantAs}${settings}</div>
+      <div class="${MARKER}-spell-lists" data-tooltip="PF1EL.Sel.SpellListHint">
+        <div class="${MARKER}-tags">${chips}${entry}</div>
+        ${cell("PF1EL.Sel.SpellLevels", levels)}
+      </div>`;
+}
+
+function rowMarkup(item, row, { editable, tagList, spellList }) {
   const dis = editable ? "" : " disabled";
   const untag = editable
     ? ` <a class="${MARKER}-untag" data-tooltip="PF1EL.Sel.Remove"><i class="fa-solid fa-xmark"></i></a>`
@@ -130,6 +186,7 @@ function rowMarkup(item, row, { editable, tagList }) {
           "PF1EL.Sel.ClassHint"
         )}
       </div>
+      ${spellMarkup(row, { editable, spellList, cell })}
       ${dropListMarkup(row.list, "list", "PF1EL.Sel.DropListed", editable)}
       ${picksMarkup(item, row, editable)}
     </div>`;
@@ -138,19 +195,22 @@ function rowMarkup(item, row, { editable, tagList }) {
 function grantMarkup(item, { editable, tagList }) {
   const rows = getSelections(item);
   const add = editable ? `<a class="${MARKER}-add"><i class="fa-solid fa-plus"></i> ${t("PF1EL.Sel.AddRow")}</a>` : "";
-  const options = vocabulary()
-    .tags.map((tag) => `<option value="${esc(tag)}"></option>`)
-    .join("");
+  const words = vocabulary();
+  const asOptions = (values) => values.map((v) => `<option value="${esc(v)}"></option>`).join("");
+  const spellList = `${tagList}-spells`;
+  const spellOptions = asOptions(words.spellLists);
+  const options = asOptions(words.tags);
   return `
     <p class="notes">${t("PF1EL.Sel.GrantHint")}</p>
-    ${rows.map((row) => rowMarkup(item, row, { editable, tagList })).join("")}
+    ${rows.map((row) => rowMarkup(item, row, { editable, tagList, spellList })).join("")}
     ${add}
     <div class="form-group">
       <label class="checkbox" data-tooltip="PF1EL.Sel.KeepHint"><input type="checkbox" data-keep${
         keepsPlace(item) ? " checked" : ""
       }${editable ? "" : " disabled"}/> ${t("PF1EL.Sel.Keep")}</label>
     </div>
-    <datalist id="${tagList}">${options}</datalist>`;
+    <datalist id="${tagList}">${options}</datalist>
+    <datalist id="${spellList}">${spellOptions}</datalist>`;
 }
 
 function optionMarkup(item, { editable, listId }) {
@@ -261,7 +321,7 @@ async function droppedDocument(event, item, kind) {
 }
 
 /** Draw the section, replacing `old` in place when given. */
-function draw(app, tab, old = null, { focusRow = null } = {}) {
+function draw(app, tab, old = null, { focusRow = null, focus = "tag" } = {}) {
   const item = app.item;
   const editable = app.isEditable;
   const configured = !!getRole(item) || !!pickedFor(item);
@@ -326,9 +386,52 @@ function draw(app, tab, old = null, { focusRow = null } = {}) {
     el.addEventListener("change", async (ev) => {
       ev.stopPropagation();
       const field = el.dataset.field;
-      const value = field === "count" ? Math.max(1, Math.floor(Number(el.value) || 1)) : el.value.trim();
+      let value;
+      if (field in NUMBER_FIELDS) {
+        const min = NUMBER_FIELDS[field];
+        const n = Math.floor(Number(el.value));
+        value = Number.isFinite(n) ? Math.max(min, n) : Math.max(min, 1);
+      } else if (field in SPELL_LEVEL_FIELDS) {
+        const n = Math.floor(Number(el.value));
+        value = el.value === "" || !Number.isFinite(n) ? SPELL_LEVEL_FIELDS[field] : Math.clamp(n, 0, 9);
+      } else if (CHECK_FIELDS.includes(field)) value = el.checked;
+      else value = el.value.trim();
       await editRow(rowOf(el), (row) => (row[field] = value));
-      el.value = value;
+      // Grant as changes which controls show; a level range may have been reordered.
+      if (field === "grantAs" || field in SPELL_LEVEL_FIELDS) return void redraw();
+      if (!CHECK_FIELDS.includes(field)) el.value = value;
+    });
+  }
+
+  for (const el of section.querySelectorAll(`.${MARKER}-spell-entry`)) {
+    const add = async () => {
+      const tag = el.value.trim();
+      if (!tag || el.dataset.saving) return;
+      el.dataset.saving = "1";
+      const rowId = rowOf(el);
+      await editRow(rowId, (row) => (row.spellLists = [...new Set([...row.spellLists, tag])]));
+      redraw({ focusRow: rowId, focus: "spell" });
+    };
+    el.addEventListener("change", (ev) => {
+      ev.stopPropagation();
+      add();
+    });
+    el.addEventListener("input", (ev) => {
+      if (ev.inputType === "insertReplacementText") add();
+    });
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      add();
+    });
+  }
+
+  for (const a of section.querySelectorAll(`.${MARKER}-unspell`)) {
+    a.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      const tag = ev.currentTarget.closest("[data-spell-list]")?.dataset.spellList;
+      await editRow(rowOf(ev.currentTarget), (row) => (row.spellLists = row.spellLists.filter((x) => x !== tag)));
+      redraw();
     });
   }
 
@@ -439,7 +542,10 @@ function draw(app, tab, old = null, { focusRow = null } = {}) {
     title: t("PF1EL.Cast.Toggle"),
   });
 
-  if (focusRow) section.querySelector(`[data-row="${focusRow}"] .${MARKER}-tag-entry`)?.focus();
+  if (focusRow) {
+    const entry = focus === "spell" ? `${MARKER}-spell-entry` : `${MARKER}-tag-entry`;
+    section.querySelector(`[data-row="${focusRow}"] .${entry}`)?.focus();
+  }
 }
 
 /**

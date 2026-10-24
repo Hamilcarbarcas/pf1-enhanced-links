@@ -346,6 +346,40 @@ sheet after its picks are made.
 One item gives its picks at one level. A class that grants a rage power at 2nd, 4th,
 and 6th level needs three granting features, one at each level.
 
+### Picking spells
+
+For a feature that has you pick a spell, such as the Minor Magic rogue talent,
+set the selection's **Grant spells as**:
+
+| Grant spells as | A picked spell |
+|---|---|
+| As is | is added as it is in the compendium. This is the default. |
+| Spell-like ability | goes to the spell-like abilities book with the selection's **Times/day** (0 = at will) and no components, as a Spell Supplements spell-like ability does. |
+| Class spell | goes to the spellbook of the selection's class, at its level on that class's list. **Domain/School spells** and **Bonus spells known** work as they do on Spell Supplements. |
+
+Only spells are affected. Anything else picked from the same selection is added
+as it is.
+
+In either spell mode the selection can also list spells by **spell list**: add
+class tags such as `wizard`, and set the **Spell levels** range. Every spell on
+one of those lists within the range is offered, and the picker shows each one's
+spell level. Minor Magic is the list `wizard` (or `sorcerer`) at levels 0 to 0,
+granted as a spell-like ability at 3 Times/day. Of the Selection Sources
+settings, only **Compendiums** limits spell-list searches.
+
+- A spell-like ability picked this way stacks with the same spell-like ability
+  from anywhere else, such as a racial one: one spell, with the uses added up.
+- Changing Times/day later updates the spell already on the actor.
+- A class spell is added once the class has a spellbook. With no class on the
+  selection or the feature, it goes to a spellcasting class whose list has the
+  spell. If the character has several, you are asked which one.
+- A spell already picked for any selection on the character is shown as *known*.
+- Changing **Grant spells as** after a pick is made replaces the spell on the
+  actor with one made the new way.
+- A picked spell-like ability's caster level comes from Hit Dice, as all
+  spell-like abilities' do. A feature that sets it from a class level needs that
+  set on the spell by hand.
+
 ### An item that can be picked
 
 An item is in a list as soon as it carries the tag. Set its role only to add rules:

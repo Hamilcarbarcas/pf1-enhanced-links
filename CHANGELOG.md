@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- **Picking spells** in Selections: a selection's **Grant spells as** setting adds a
+  picked spell as a spell-like ability (with Times/day, stacking with other copies) or
+  as a class spell (in the class's spellbook, with Domain/School and Bonus spells
+  known). A selection can also offer every spell on chosen class spell lists within
+  a spell level range.
 - **Archetypes are children of their class**: deleting a class removes its archetypes, and
   what they granted, through the system's delete cascade.
 - **Bonus spells known** checkbox on Spell Supplements: granted spells don't count against the

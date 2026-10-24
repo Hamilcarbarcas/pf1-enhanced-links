@@ -218,6 +218,39 @@ table.item-links td.item-name .el-scripts .el-script-add:hover {
   width: 100%;
 }
 
+.pf1el-sel .pf1el-sel-line.pf1el-sel-spell {
+  grid-template-columns: 1fr 1fr;
+}
+
+.pf1el-sel .pf1el-sel-checks {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  font-size: 0.9em;
+}
+
+.pf1el-sel .pf1el-sel-spell-lists {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  margin: 0.3rem 0;
+}
+
+.pf1el-sel input.pf1el-sel-spell-entry {
+  flex: 1 1 8em;
+  min-width: 8em;
+}
+
+.pf1el-sel .pf1el-sel-levels {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.pf1el-sel .pf1el-sel-cell .pf1el-sel-levels input {
+  width: 3em;
+}
+
 .pf1el-sel .pf1el-sel-droplist {
   flex: 1;
 }

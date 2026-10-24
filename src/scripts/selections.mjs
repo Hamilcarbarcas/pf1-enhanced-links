@@ -25,10 +25,17 @@ const SELECT_ACTION_IMG = "icons/svg/item-bag.svg";
 
 export const ROLES = ["grant", "option", "both"];
 
+// How a row grants a picked spell. "" copies it as it is. DESIGN.md § Spell picks.
+export const GRANT_AS = { asIs: "", spelllike: "spelllike", class: "class" };
+const SPELL_MODES = [GRANT_AS.spelllike, GRANT_AS.class];
+export const grantsSpells = (row) => SPELL_MODES.includes(row?.grantAs);
+
 // Held in the pack indexes, so a catalog is listed without loading documents.
 const INDEX_FIELDS = [
   "system.tags",
   "system.subType",
+  "system.level",
+  "system.learnedAt.class",
   `flags.${MODULE_ID}.${ROLE_FLAG}`,
   `flags.${MODULE_ID}.${OPTION_FLAG}`,
 ];
@@ -156,14 +163,30 @@ export function getSelections(item) {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((row) => typeof row?.id === "string")
-    .map((row) => ({
-      id: row.id,
-      label: text(row.label),
-      tags: textList(row.tags),
-      list: textList(row.list),
-      levelClass: text(row.levelClass),
-      count: Math.max(1, Math.floor(Number(row.count) || 1)),
-    }));
+    .map((row) => {
+      const spellMin = spellLevelOf(row.spellMin, 0);
+      return {
+        id: row.id,
+        label: text(row.label),
+        tags: textList(row.tags),
+        list: textList(row.list),
+        levelClass: text(row.levelClass),
+        count: Math.max(1, Math.floor(Number(row.count) || 1)),
+        grantAs: SPELL_MODES.includes(row.grantAs) ? row.grantAs : GRANT_AS.asIs,
+        perDay: Math.max(0, Math.floor(Number(row.perDay ?? 1) || 0)),
+        domain: row.domain === true,
+        bonusKnown: row.bonusKnown === true,
+        spellLists: textList(row.spellLists),
+        spellMin,
+        spellMax: Math.max(spellMin, spellLevelOf(row.spellMax, 9)),
+      };
+    });
+}
+
+/** A spell level 0 to 9, or the fallback when blank. */
+function spellLevelOf(value, fallback) {
+  const n = Math.floor(Number(value));
+  return value === "" || value === null || value === undefined || !Number.isFinite(n) ? fallback : Math.clamp(n, 0, 9);
 }
 
 export const keepsPlace = (item) => flagsOf(item)[KEEP_FLAG] === true;
@@ -210,17 +233,32 @@ export const classIsOpen = (item, row) => !(row?.levelClass || getAssociatedClas
 
 export const openSlots = (item) => slotsOf(item).reduce((n, slot) => n + slot.open, 0);
 
-/** What a granting feature wants on the actor: one entry per distinct pick, with its class tag. */
+/**
+ * What a granting feature wants on the actor: one entry per distinct pick, with its
+ * class tag and the row it was picked in. The first row holding a uuid wins.
+ */
 export function pickedGrants(item) {
   const out = new Map();
   for (const { row, picks, classes } of slotsOf(item)) {
     const tag = row.levelClass || getAssociatedClass(item) || "";
     // With no class from the row or the feature, the one chosen with the pick.
     picks.forEach((uuid, i) => {
-      if (!out.has(uuid)) out.set(uuid, { uuid, tag: tag || classes[i] });
+      if (!out.has(uuid)) out.set(uuid, { uuid, tag: tag || classes[i], row });
     });
   }
   return [...out.values()];
+}
+
+/**
+ * Times/day a spell-like pick gets from its row: the row's count once per slot
+ * holding it. Null when the row is gone, isn't spell-like, or no longer holds it.
+ */
+export function pickPerDay(item, rowId, uuid) {
+  const slot = slotsOf(item).find((s) => s.row.id === rowId);
+  if (slot?.row.grantAs !== GRANT_AS.spelllike) return null;
+  const target = uniform(uuid);
+  const slots = slot.picks.filter((u) => uniform(u) === target).length;
+  return slots ? slot.row.perDay * slots : null;
 }
 
 /**
@@ -231,11 +269,24 @@ export function pickedGrants(item) {
  * Highest level first, then the item's own order.
  */
 export function eligibleClasses(actor, data) {
+  if (data?.type === "spell") return spellClasses(actor, data);
   const names = (data?.system?.associations?.classes ?? []).map((name) => text(name).toLowerCase()).filter(Boolean);
   if (!names.length) return [];
   const place = (cls) => names.indexOf(text(cls.name).toLowerCase());
   const held = (actor.itemTypes?.class ?? []).filter((cls) => place(cls) >= 0);
   return held.sort((a, b) => (b.system?.level ?? 0) - (a.system?.level ?? 0) || place(a) - place(b));
+}
+
+/**
+ * A spell's version: the actor's classes with a spellbook whose list holds the spell,
+ * else every class with a book. DESIGN.md § Spell picks.
+ */
+function spellClasses(actor, spell) {
+  const books = Object.values(actor.system?.attributes?.spells?.spellbooks ?? {});
+  const casters = (actor.itemTypes?.class ?? []).filter((cls) => cls.system?.tag && books.some((b) => b?.class === cls.system.tag));
+  const learned = spell.system?.learnedAt?.class ?? {};
+  const onList = casters.filter((cls) => Number.isFinite(learned[cls.system.tag]));
+  return (onList.length ? onList : casters).sort((a, b) => (b.system?.level ?? 0) - (a.system?.level ?? 0));
 }
 
 /** The first of those, as a class tag. For a pick recorded with no class chosen. Null if none. */
@@ -320,7 +371,8 @@ export function slotLevel(feature, row, depth = 0) {
 
 /**
  * What the actor has, for judging a pick: its items, and picks recorded but not
- * granted yet, so a second pick is judged with the first already counted.
+ * granted yet, so a second pick is judged with the first already counted. Spells
+ * count only as picks. DESIGN.md § Spell picks.
  */
 function holdings(actor) {
   const held = [];
@@ -337,7 +389,8 @@ function holdings(actor) {
   for (const feature of actor.items) {
     for (const { picks } of slotsOf(feature)) {
       for (const uuid of picks) {
-        if (grantedItem(feature, uuid)) continue;
+        const granted = grantedItem(feature, uuid);
+        if (granted && dedupable(granted.type)) continue;
         const source = resolveSync(uuid);
         if (!source) continue;
         held.push({
@@ -592,12 +645,18 @@ const isCore = (pack) => pack?.metadata?.packageType === "system";
  * @returns {(pack: object, tags: string[]) => string[]} the tags still searched there
  */
 function searchScope() {
-  const { core, packs } = getSources();
-  const ids = new Set(packs.ids);
+  const { core } = getSources();
   const coreTags = new Set(core.tags);
-  const packOk = (pack) => packs.mode === "all" || (packs.mode === "include") === ids.has(pack.collection);
+  const packOk = packScope();
   const coreOk = (tag) => core.mode === "all" || (core.mode !== "none" && (core.mode === "include") === coreTags.has(tag));
   return (pack, tags) => (!packOk(pack) ? [] : isCore(pack) ? tags.filter(coreOk) : tags);
+}
+
+/** The Compendiums rule alone, which spell-list searches follow. */
+function packScope() {
+  const { packs } = getSources();
+  const ids = new Set(packs.ids);
+  return (pack) => packs.mode === "all" || (packs.mode === "include") === ids.has(pack.collection);
 }
 
 // ─── Catalogs ───────────────────────────────────────────────────────────────────
@@ -614,7 +673,7 @@ function packRank(pack) {
 
 const worldItems = () => game.items.filter((item) => item.testUserPermission(game.user, "LIMITED"));
 
-function entryOf(source, rank) {
+function entryOf(source, rank, row) {
   return {
     uuid: source.uuid,
     name: source.name,
@@ -622,9 +681,31 @@ function entryOf(source, rank) {
     type: source.type,
     tags: tagsOf(source),
     option: getOption(source),
+    spellLevel: grantsSpells(row) ? spellLevelFor(source, row) : null,
     rank,
     hides: [], // same-name options this one stands in for
   };
+}
+
+/** A spell's levels on the given lists, as { [tag]: level }. */
+const learnedOn = (source, lists) => {
+  const learned = source?.system?.learnedAt?.class ?? {};
+  return lists.map((tag) => learned[tag]).filter((n) => Number.isFinite(n));
+};
+
+/** A spell's level for a row: lowest on the row's lists, else its own. Null for a non-spell. */
+function spellLevelFor(source, row) {
+  if (source?.type !== "spell") return null;
+  const levels = learnedOn(source, textList(row.spellLists));
+  return levels.length ? Math.min(...levels) : source.system?.level ?? 0;
+}
+
+/** Whether a spell is on one of a row's lists within its level range. */
+function onSpellList(source, row) {
+  if (source?.type !== "spell") return false;
+  const min = row.spellMin ?? 0;
+  const max = row.spellMax ?? 9;
+  return learnedOn(source, textList(row.spellLists)).some((n) => n >= min && n <= max);
 }
 
 /** Every [source, rank] a listed uuid stands for: one item, or a folder's items. */
@@ -667,10 +748,10 @@ function collapse(entries) {
 }
 
 /**
- * The options a row draws from: everything carrying one of its tags, plus what was
- * dropped on it. Only what the current user can see.
+ * The options a row draws from: everything carrying one of its tags, every spell on
+ * its spell lists, plus what was dropped on it. Only what the current user can see.
  *
- * @returns {Promise<object[]>} entries of { uuid, name, img, type, tags, option, rank, hides }
+ * @returns {Promise<object[]>} entries of { uuid, name, img, type, tags, option, spellLevel, rank, hides }
  */
 export async function resolveCatalog(row) {
   const packs = itemPacks();
@@ -678,8 +759,19 @@ export async function resolveCatalog(row) {
 
   const found = new Map();
   const add = (source, rank) => {
-    if (source?.uuid && !found.has(source.uuid)) found.set(source.uuid, entryOf(source, rank));
+    if (source?.uuid && !found.has(source.uuid)) found.set(source.uuid, entryOf(source, rank, row));
   };
+
+  // Spell lists, in a spell mode only. DESIGN.md § Spell picks.
+  if (grantsSpells(row) && textList(row.spellLists).length) {
+    for (const item of worldItems()) if (onSpellList(item, row)) add(item, RANK.worldItem);
+    const packOk = packScope();
+    for (const pack of packs) {
+      if (!packOk(pack)) continue;
+      const rank = packRank(pack);
+      for (const entry of pack.index) if (onSpellList(entry, row)) add(entry, rank);
+    }
+  }
 
   const tags = textList(row?.tags);
   const carries = (source, want) => tagsOf(source).some((tag) => want.has(tag));
@@ -718,14 +810,31 @@ export function vocabulary() {
     if (!groups.has(group)) groups.set(group, new Set());
     if (branch) groups.get(group).add(branch);
   };
-  for (const item of worldItems()) read(item);
+  // Spell-list class tags, read off the spells a spell-list search would reach.
+  const lists = new Set();
+  const readLists = (source) => {
+    if (source?.type !== "spell") return;
+    for (const tag of Object.keys(source.system?.learnedAt?.class ?? {})) lists.add(tag);
+  };
+  for (const item of worldItems()) {
+    read(item);
+    readLists(item);
+  }
   const scope = searchScope();
-  for (const pack of itemPacks()) for (const entry of pack.index) read(entry, scope(pack, tagsOf(entry)));
+  const packOk = packScope();
+  for (const pack of itemPacks()) {
+    const listed = packOk(pack);
+    for (const entry of pack.index) {
+      read(entry, scope(pack, tagsOf(entry)));
+      if (listed) readLists(entry);
+    }
+  }
 
   const sorted = (set) => [...set].sort((a, b) => a.localeCompare(b));
   vocab = {
     at: Date.now(),
     tags: sorted(tags),
+    spellLists: sorted(lists),
     groups: sorted(groups.keys()),
     branches: (group) => sorted(groups.get(group) ?? []),
   };
