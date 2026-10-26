@@ -196,6 +196,10 @@ and its spells stay in it, the same as when a class is removed.
 - **Type**, **Progression**, **Spellcasting Ability**, **Spellcasting Type**,
   **Domain/School Slots**, **Level Offset**, and **Has Cantrips/Orisons** are the
   same settings a class has.
+- **Spellcasting Type** *Psionic manifesting* (with pf1-psionics active) makes a
+  psionic manifester instead of a spellbook. It has no Spell list, Type, or
+  Domain/School Slots.
+- With PF1 Enhanced Spellbooks active, the book's **Spellbook** setting is here too.
 
 For example, a rogue archetype that casts from the wizard list: Level from
 *Associated class*, Spell list `wizard`, Type *Prepared*, Progression *Medium*,
@@ -207,6 +211,14 @@ Notes:
 
 - A setting you change on the actor's book stays until you change that same setting
   on the item.
+- **Level Offset** is added to the book's caster level formula beside anything
+  already there, so other offsets stay when you change it.
+- When an archetype replaces the class feature that grants a class's book with one
+  of its own, the new feature takes over the same book and the spells in it.
+- If the class itself still has spellcasting set up, you get a warning: the class
+  makes a book of its own too.
+- A class sheet hides its Spell Casting section (and pf1-psionics' Manifesting
+  section) when that class has none of its own: set it on a class feature instead.
 - PF1 has three spellbooks besides spell-like abilities. If none is free you get a
   warning and no book is granted.
 - With Level from *Associated class*, that class has to be on the actor.
@@ -235,6 +247,7 @@ Every setting starts at **No change**. Only the ones you set are touched:
 | Diminished spellcasting, spontaneous caster | Cast Per Day `-1` |
 | Diminished spellcasting, prepared caster | Prepared / Known `-1` |
 | An arcanist archetype using the witch list | Spell list `witch` |
+| Cantrips as their own class feature, beside a granted book with them off | Has Cantrips/Orisons *Yes* |
 
 Removing the feature puts every setting back the way it was and takes its offsets
 out again.

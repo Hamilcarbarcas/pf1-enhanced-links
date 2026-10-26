@@ -560,3 +560,16 @@ li.item.pf1el-sel-pending .item-name h4 a.pf1el-sel-tag:hover {
   padding-left: 1.5rem;
   list-style: disc;
 }
+
+/* Class sheets: casting sections of a class with none of its own. pf1-psionics'
+   section is the one whose progression follows its header (after an info line
+   on an embedded class). */
+.pf1el-cast-nocast h3.form-header:has(+ .spellcasting-type),
+.pf1el-cast-nocast .spellcasting-type,
+.pf1el-cast-nomanifest h3.form-header:has(+ .spellcasting-progression),
+.pf1el-cast-nomanifest h3.form-header:has(+ p.info + .spellcasting-progression),
+.pf1el-cast-nomanifest h3.form-header + p.info:has(+ .spellcasting-progression),
+.pf1el-cast-nomanifest h3.form-header + .spellcasting-progression,
+.pf1el-cast-nomanifest h3.form-header + p.info + .spellcasting-progression {
+  display: none;
+}

@@ -21,6 +21,8 @@ export const CHOICE_FLAG = "spellcastingChoice";
 export const LEDGER_FLAG = "spellcastingLedger";
 // On the actor: { [itemId]: { book, stamp } }, the spellbook each Grant item made
 export const BOOKS_FLAG = "spellcastingBooks";
+// On the actor: the same, for psionic manifesters
+export const MANIFESTERS_FLAG = "spellcastingManifesters";
 // On the actor: { [itemId]: { book, replaced: { key: { prev, applied } }, terms: { key: term } } },
 // what each Modify item changed on its class's book
 export const MODS_FLAG = "spellcastingMods";
@@ -32,6 +34,8 @@ export const WHENS = ["all", "except", "only"];
 export const BOOK_TYPES = ["prepared", "spontaneous", "hybrid"];
 export const PROGRESSIONS = ["high", "med", "low"];
 export const SPELL_KINDS = ["arcane", "divine", "psychic", "alchemy"];
+// A Grant may also make a psionic manifester.
+export const GRANT_KINDS = [...SPELL_KINDS, "psionic"];
 
 // Books a Grant may take. The spell-like book is never one.
 const SLOTS = ["primary", "secondary", "tertiary"];
@@ -75,7 +79,7 @@ export function getSpellcasting(item) {
     type: pick(b.type, BOOK_TYPES, "prepared"),
     progression: pick(b.progression, PROGRESSIONS, "high"),
     ability: typeof b.ability === "string" && b.ability ? b.ability : "int",
-    spells: pick(b.spells, SPELL_KINDS, "arcane"),
+    spells: pick(b.spells, GRANT_KINDS, "arcane"),
     cantrips: b.cantrips !== false,
     domain: Math.max(0, Math.floor(Number(b.domain) || 0)),
     clOffset: Math.floor(Number(b.clOffset) || 0),
@@ -121,7 +125,7 @@ export function hasSpellcasting(item) {
 
 /** Whether the actor's ledgers record anything for an item id. */
 export function hasSpellcastingLedger(actor, itemId) {
-  return [LEDGER_FLAG, BOOKS_FLAG, MODS_FLAG].some((flag) => !!actor.getFlag(MODULE_ID, flag)?.[itemId]);
+  return [LEDGER_FLAG, BOOKS_FLAG, MANIFESTERS_FLAG, MODS_FLAG].some((flag) => !!actor.getFlag(MODULE_ID, flag)?.[itemId]);
 }
 
 /** The book an item's Modify is applied to on this actor, or null. */
@@ -134,9 +138,13 @@ export function listTagOf(actor, bookId) {
   return actor?.getFlag?.(MODULE_ID, LISTS_FLAG)?.[bookId] || null;
 }
 
-/** The book an item's Grant made on this actor, or null. */
-export function grantedBookOf(actor, itemId) {
-  return actor?.getFlag?.(MODULE_ID, BOOKS_FLAG)?.[itemId]?.book ?? null;
+/** The system a Grant config makes its book in. */
+export const grantSystemOf = (book) => (book.spells === "psionic" ? "psionic" : "spell");
+
+/** The book (or manifester) an item's Grant made on this actor, or null. */
+export function grantedBookOf(actor, itemId, system = "spell") {
+  const flag = system === "psionic" ? MANIFESTERS_FLAG : BOOKS_FLAG;
+  return actor?.getFlag?.(MODULE_ID, flag)?.[itemId]?.book ?? null;
 }
 
 // ─── Terms ──────────────────────────────────────────────────────────────────────
@@ -308,7 +316,7 @@ export function reconcileSpellcasting(actor) {
  */
 async function run(actor) {
   const granted = await runGrants(actor);
-  const modified = await runModify(actor);
+  const modified = await runModify(actor, granted.fresh);
   // A Modify's list wins over the Grant that made the book.
   const listed = await syncLists(actor, { ...granted.lists, ...modified.lists });
   const advanced = await runRows(actor);
@@ -333,58 +341,145 @@ const BOOK_BASE = "system.attributes.spells.spellbooks";
 
 // ─── Grant ──────────────────────────────────────────────────────────────────────
 
+/** Where each system keeps its books, and its Grant ledger. */
+const GRANT_SYSTEMS = {
+  spell: {
+    flag: BOOKS_FLAG,
+    base: BOOK_BASE,
+    books: (actor) => actor.system?.attributes?.spells?.spellbooks ?? {},
+    classCasts: (cls) => !!cls.system?.casting?.type,
+  },
+  psionic: {
+    flag: MANIFESTERS_FLAG,
+    base: `flags.${PSIONICS}.manifesters`,
+    books: (actor) => actor.getFlag(PSIONICS, "manifesters") ?? {},
+    classCasts: (cls) => !!cls.system?.manifesting?.progression,
+  },
+};
+
 /** Book fields a Grant sets: stamp key -> [path under the book, value]. */
-function grantFields(cfg, item, levelClass) {
-  return {
-    kind: ["kind", cfg.spells],
+function grantFields(cfg, item, levelClass, system) {
+  const common = {
     class: ["class", levelClass],
-    type: ["spellPreparationMode", cfg.type],
     progression: ["casterType", cfg.progression],
     ability: ["ability", cfg.ability],
+    cantrips: ["hasCantrips", cfg.cantrips],
+    name: ["name", cfg.name || item.name],
+  };
+  if (system === "psionic") return common;
+  return {
+    ...common,
+    kind: ["kind", cfg.spells],
+    type: ["spellPreparationMode", cfg.type],
     psychic: ["psychic", cfg.spells === "psychic"],
     asf: ["arcaneSpellFailure", cfg.spells === "arcane"],
-    cantrips: ["hasCantrips", cfg.cantrips],
     domain: ["domainSlotValue", cfg.domain],
-    clFormula: ["cl.formula", cfg.clOffset ? String(cfg.clOffset) : ""],
-    name: ["name", cfg.name || item.name],
   };
 }
 
 // "No free spellbook" is said once per item per session, not on every pass.
 const warnedFull = new Set();
+// So is a Grant whose class still has its own casting set up, and a psionic Grant
+// without pf1-psionics.
+const warnedClassCasts = new Set();
+const warnedNoPsionics = new Set();
 
 /**
- * Create, update and retire the spellbooks Grant items make. DESIGN.md § Feature 6.
+ * The `cl.formula` write for a Grant's level offset, or null when none is needed.
+ * A fresh book gets the offset alone. After that it is one addend, so terms other
+ * items added survive a change of offset.
+ */
+function offsetFormula(stored, prev, term, fresh) {
+  if (fresh) return term;
+  if (prev === term) return null;
+  const list = addends(stored);
+  const index = prev ? list.indexOf(prev) : -1;
+  if (index >= 0) list.splice(index, 1);
+  if (term) list.push(term);
+  return list.join(" + ");
+}
+
+/**
+ * Spellbook Grants, then psionic ones. Psionic records are left alone while
+ * pf1-psionics is off, so turning it back on finds them intact.
+ */
+async function runGrants(actor) {
+  const spell = await grantSystem(actor, "spell");
+  if (!psionicsActive()) {
+    for (const item of actor.items.filter((it) => grants(it) && grantSystemOf(getSpellcasting(it).book) === "psionic")) {
+      const key = `${actor.uuid}:${item.id}`;
+      if (warnedNoPsionics.has(key)) continue;
+      warnedNoPsionics.add(key);
+      ui.notifications.warn(game.i18n.format("PF1EL.Cast.Warn.NoPsionics", { item: item.name }));
+    }
+    return spell;
+  }
+  const psionic = await grantSystem(actor, "psionic");
+  return { ...spell, changed: spell.changed || psionic.changed };
+}
+
+/**
+ * Create, update and retire the books one system's Grant items make. DESIGN.md § Feature 6.
  *
  * A field is written when the book is first taken, and afterwards only when the
  * config value changes, so an edit made on the actor sheet stays.
  */
-async function runGrants(actor) {
-  const before = actor.getFlag(MODULE_ID, BOOKS_FLAG) ?? {};
-  const granters = actor.items.filter(grants);
-  if (!granters.length && !Object.keys(before).length) return { changed: false, lists: {} };
+async function grantSystem(actor, system) {
+  const sys = GRANT_SYSTEMS[system];
+  const ledger = sys.flag;
+  const before = actor.getFlag(MODULE_ID, ledger) ?? {};
+  const granters = actor.items.filter((it) => grants(it) && grantSystemOf(getSpellcasting(it).book) === system);
+  if (!granters.length && !Object.keys(before).length) return { changed: false, lists: {}, fresh: new Set() };
 
-  const books = actor.system?.attributes?.spells?.spellbooks ?? {};
-  const bookBase = BOOK_BASE;
+  const books = sys.books(actor);
+  const bookBase = sys.base;
   const flagBase = `flags.${MODULE_ID}`;
   const update = {};
-  const claimed = new Set(Object.values(before).map((rec) => rec?.book));
   const wantLists = {};
   const kept = new Set();
+  // Books taken this pass. Every field was written, so a Modify on one applies again.
+  const fresh = new Set();
 
+  const plans = [];
   for (const item of granters) {
     const cfg = getSpellcasting(item).book;
     const tag = getAssociatedClass(item);
     const levelClass = cfg.levelSource === "hd" ? "_hd" : tag;
     // A class-level book needs its class on the actor.
     if (levelClass !== "_hd" && !(tag && actor.classes?.[tag])) continue;
+    plans.push({ item, cfg, levelClass });
 
+    const cls = levelClass === "_hd" ? null : actor.itemTypes.class.find((c) => c.system.tag === levelClass);
+    const warnKey = `${actor.uuid}:${item.id}`;
+    if (cls && sys.classCasts(cls) && !warnedClassCasts.has(warnKey)) {
+      warnedClassCasts.add(warnKey);
+      ui.notifications.warn(game.i18n.format("PF1EL.Cast.Warn.ClassCasts", { item: item.name, class: cls.name }));
+    }
+  }
+
+  // Books of records that end this pass are released first, so a Grant replacing
+  // another on the same class (an archetype swap) takes the same book.
+  const staying = new Set(plans.map((p) => p.item.id));
+  const claimed = new Set();
+  const released = new Set();
+  for (const [itemId, rec] of Object.entries(before)) {
+    if (!rec?.book) continue;
+    (staying.has(itemId) ? claimed : released).add(rec.book);
+  }
+
+  for (const { item, cfg, levelClass } of plans) {
     const rec = before[item.id];
     let bookId = rec?.book;
     const taken = !!bookId && !!books[bookId];
     if (!taken) {
       // An unused book, preferring one this class had before: its spells are still in it.
-      const free = SLOTS.filter((id) => books[id] && !books[id].inUse && !claimed.has(id));
+      // A released book goes only to the same class.
+      const free = SLOTS.filter(
+        (id) =>
+          books[id] &&
+          !claimed.has(id) &&
+          (!books[id].inUse || (released.has(id) && books[id].class === levelClass))
+      );
       bookId = free.find((id) => books[id].class === levelClass) ?? free[0];
       if (!bookId) {
         const key = `${actor.uuid}:${item.id}`;
@@ -393,39 +488,51 @@ async function runGrants(actor) {
         continue;
       }
       claimed.add(bookId);
+      fresh.add(bookId);
     }
     kept.add(item.id);
 
     const stamp = taken ? (rec.stamp ?? {}) : {};
     const applied = {};
     let stale = !taken;
-    for (const [key, [path, value]] of Object.entries(grantFields(cfg, item, levelClass))) {
+    for (const [key, [path, value]] of Object.entries(grantFields(cfg, item, levelClass, system))) {
       applied[key] = value;
       if (taken && stamp[key] === value) continue;
       update[`${bookBase}.${bookId}.${path}`] = value;
       stale = true;
     }
+    // Older records stamped the whole formula as `clFormula`.
+    const term = cfg.clOffset ? String(cfg.clOffset) : "";
+    applied.clTerm = term;
+    const clPath = `${bookBase}.${bookId}.cl.formula`;
+    const prevTerm = stamp.clTerm ?? stamp.clFormula ?? "";
+    const formula = offsetFormula(foundry.utils.getProperty(actor._source, clPath), prevTerm, term, !taken);
+    if (formula !== null) {
+      update[clPath] = formula;
+      stale = true;
+    } else if (!("clTerm" in stamp)) stale = true;
     if (!books[bookId].inUse) update[`${bookBase}.${bookId}.inUse`] = true;
-    if (stale) update[`${flagBase}.${BOOKS_FLAG}.${item.id}`] = { book: bookId, stamp: applied };
+    if (stale) update[`${flagBase}.${ledger}.${item.id}`] = { book: bookId, stamp: applied };
 
-    if (cfg.listTag && cfg.listTag !== levelClass) wantLists[bookId] = cfg.listTag;
+    if (system === "spell" && cfg.listTag && cfg.listTag !== levelClass) wantLists[bookId] = cfg.listTag;
   }
 
   // Retire the book of an item that left, lost its class, or no longer grants.
   for (const [itemId, rec] of Object.entries(before)) {
     if (kept.has(itemId)) continue;
     const stored = foundry.utils.getProperty(actor._source, `${bookBase}.${rec?.book}`);
-    if (stored) {
+    // Taken again this pass: the new Grant's writes stand.
+    if (stored && !claimed.has(rec.book)) {
       if (stored.inUse) update[`${bookBase}.${rec.book}.inUse`] = false;
       // The name would otherwise label whatever class takes this book next.
       if (rec.stamp?.name && stored.name === rec.stamp.name) update[`${bookBase}.${rec.book}.name`] = "";
     }
-    update[`${flagBase}.${BOOKS_FLAG}.-=${itemId}`] = null;
+    update[`${flagBase}.${ledger}.-=${itemId}`] = null;
   }
 
-  if (!Object.keys(update).length) return { changed: false, lists: wantLists };
+  if (!Object.keys(update).length) return { changed: false, lists: wantLists, fresh };
   await actor.update(update, { render: false });
-  return { changed: true, lists: wantLists };
+  return { changed: true, lists: wantLists, fresh };
 }
 
 // ─── Modify ─────────────────────────────────────────────────────────────────────
@@ -478,9 +585,10 @@ const warnedClash = new Set();
  * config value changes, and put back only if it still holds what was applied, so
  * an edit made on the actor sheet stays.
  *
+ * @param {Set<string>} [fresh] - Books a Grant took this pass
  * @returns {Promise<{ changed: boolean, lists: Record<string, string> }>}
  */
-async function runModify(actor) {
+async function runModify(actor, fresh = new Set()) {
   const before = actor.getFlag(MODULE_ID, MODS_FLAG) ?? {};
   const modifiers = actor.items.filter(modifies);
   const lists = {};
@@ -508,7 +616,7 @@ async function runModify(actor) {
   /** Another item's live record of the same setting on the same book. */
   const otherClaim = (itemId, bookId, key) => {
     for (const [id, rec] of Object.entries(before)) {
-      if (id === itemId || rec?.book !== bookId || !rec.replaced?.[key]) continue;
+      if (id === itemId || rec?.book !== bookId || fresh.has(bookId) || !rec.replaced?.[key]) continue;
       const w = want.get(id);
       if (w?.book === bookId && key in w.fields) return rec.replaced[key];
     }
@@ -530,9 +638,11 @@ async function runModify(actor) {
   const gone = [];
 
   // Existing records: follow a changed config value, undo what is no longer wanted.
+  // On a book a Grant just took, every record starts over: nothing is undone.
   for (const [itemId, rec] of Object.entries(before)) {
     const w = want.get(itemId);
-    const sameBook = !!w && w.book === rec?.book;
+    const reset = fresh.has(rec?.book);
+    const sameBook = !reset && !!w && w.book === rec?.book;
     for (const [key, r] of Object.entries(rec?.replaced ?? {})) {
       const path = `${BOOK_BASE}.${rec.book}.${MOD_FIELDS[key]}`;
       if (sameBook && key in w.fields) {
@@ -541,7 +651,7 @@ async function runModify(actor) {
         op(itemId).set(`replaced.${key}`, { prev: r.prev, applied: w.fields[key] });
         continue;
       }
-      if (stored(rec.book, MOD_FIELDS[key]) === r.applied) {
+      if (!reset && stored(rec.book, MOD_FIELDS[key]) === r.applied) {
         // Another item still replaces this setting: its value shows through.
         const other = otherClaim(itemId, rec.book, key);
         update[path] = other ? other.applied : (r.prev ?? "");
@@ -551,7 +661,7 @@ async function runModify(actor) {
     for (const [key, term] of Object.entries(rec?.terms ?? {})) {
       if (sameBook && w.terms[key] === term) continue;
       const f = formula(rec.book, key);
-      const index = f.list.indexOf(term);
+      const index = reset ? -1 : f.list.indexOf(term);
       if (index >= 0) {
         f.list.splice(index, 1);
         f.dirty = true;
@@ -564,7 +674,7 @@ async function runModify(actor) {
   // Newly wanted settings and addends.
   for (const [itemId, w] of want) {
     const rec = before[itemId];
-    const sameBook = rec?.book === w.book;
+    const sameBook = !fresh.has(w.book) && rec?.book === w.book;
     for (const [key, value] of Object.entries(w.fields)) {
       if (sameBook && rec.replaced?.[key]) continue;
       // Under another item's change, what to put back is what that item found.

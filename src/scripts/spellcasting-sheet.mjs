@@ -1,7 +1,7 @@
 /* PF1 Enhanced Links: the Spellcasting section on a feature's Details tab.
  * DESIGN.md § Feature 6. */
 
-import { MODULE_ID } from "./enhanced-links.mjs";
+import { MODULE_ID, getAssociatedClass } from "./enhanced-links.mjs";
 import { makeCollapsible } from "../common/sheet/collapse.mjs";
 import {
   BOOK_TYPES,
@@ -13,6 +13,7 @@ import {
   canClassTie,
   className,
   getSpellcasting,
+  grantSystemOf,
   grantedBookOf,
   hostsSpellcasting,
   kindLabel,
@@ -140,10 +141,14 @@ function grantMarkup(item, cfg, editable) {
   if (cfg.mode !== "grant") return mode;
 
   const actor = item.actor;
+  const psionic = grantSystemOf(book) === "psionic";
   let status = "";
   if (actor) {
-    const bookId = grantedBookOf(actor, item.id);
-    const label = bookId ? actor.system?.attributes?.spells?.spellbooks?.[bookId]?.label || bookId : null;
+    const bookId = grantedBookOf(actor, item.id, psionic ? "psionic" : "spell");
+    const data = psionic
+      ? actor.getFlag("pf1-psionics", "manifesters")?.[bookId]
+      : actor.system?.attributes?.spells?.spellbooks?.[bookId];
+    const label = bookId ? data?.label || data?.name || bookId : null;
     const line = label ? game.i18n.format("PF1EL.Cast.Book.Granted", { book: label }) : t("PF1EL.Cast.Book.NotGranted");
     status = `<p class="notes">${esc(line)}</p>`;
   }
@@ -159,7 +164,11 @@ function grantMarkup(item, cfg, editable) {
   const types = BOOK_TYPES.map((k) => [k, t(pf1.config.spellcasting.type[k] ?? k)]);
   const progressions = PROGRESSIONS.map((k) => [k, t(PROGRESSION_LABELS[k])]);
   const abilities = Object.entries(pf1.config.abilities).map(([k, label]) => [k, t(label)]);
-  const spells = SPELL_KINDS.map((k) => [k, kindLabel(k)]);
+  // Psionic is offered while pf1-psionics is on, or already chosen.
+  const kinds = psionicsActive() || psionic ? [...SPELL_KINDS, "psionic"] : SPELL_KINDS;
+  const spells = kinds.map((k) => [k, kindLabel(k)]);
+  // A manifester has no spell list, preparation type, or domain slots.
+  const spellOnly = (html) => (psionic ? "" : html);
 
   return `
     ${mode}
@@ -167,19 +176,20 @@ function grantMarkup(item, cfg, editable) {
     ${status}
     ${group(t("PF1EL.Cast.Book.Name"), text("name", book.name, item.name))}
     ${levelSource}
-    ${group(t("PF1EL.Cast.Book.List"), text("listTag", book.listTag, "wizard"))}
+    ${group(t("PF1.Spellcasting.Type.Label"), select("spells", spells, book.spells))}
+    ${spellOnly(`${group(t("PF1EL.Cast.Book.List"), text("listTag", book.listTag, "wizard"))}
     <p class="notes">${t("PF1EL.Cast.Book.ListHint")}</p>
-    ${group(t("PF1.Type"), select("type", types, book.type))}
+    ${group(t("PF1.Type"), select("type", types, book.type))}`)}
     ${group(t("PF1.Spellcasting.Progression.Label"), select("progression", progressions, book.progression))}
     ${group(t("PF1.SpellcastingAbility"), select("ability", abilities, book.ability))}
-    ${group(t("PF1.Spellcasting.Type.Label"), select("spells", spells, book.spells))}
-    ${group(t("PF1.DomainSlotValue"), number("domain", book.domain, ' min="0"'))}
+    ${spellOnly(group(t("PF1.DomainSlotValue"), number("domain", book.domain, ' min="0"')))}
     ${group(t("PF1.LevelOffset"), number("clOffset", book.clOffset))}
     <div class="form-group">
       <label class="checkbox"><input type="checkbox" data-book="cantrips"${book.cantrips ? " checked" : ""}${dis}/> ${t(
         "PF1.HasCantrips"
       )}</label>
-    </div>`;
+    </div>
+    ${spellOnly(spellbooksApi()?.renderBookSettings ? `<div class="${MARKER}-book-settings"></div>` : "")}`;
 }
 
 /** The Special slots block: a way into the other module's rule editor. Class-tied items only. */
@@ -332,6 +342,14 @@ function draw(app, tab, old = null) {
     await saveRows(item, rows);
   };
 
+  // The Spellbook settings are the other module's: it draws and saves them. Its DESIGN § 26.
+  const bookSettings = section.querySelector(`.${MARKER}-book-settings`);
+  if (bookSettings) {
+    const book = getSpellcasting(item).book;
+    const tag = book.levelSource === "hd" ? "_hd" : getAssociatedClass(item) ?? "";
+    spellbooksApi()?.renderBookSettings(item, bookSettings, { editable, tag });
+  }
+
   section.querySelector(`.${MARKER}-slots`)?.addEventListener("click", (ev) => {
     ev.preventDefault();
     spellbooksApi()?.openRules(item);
@@ -391,6 +409,8 @@ function draw(app, tab, old = null) {
       ev.stopPropagation();
       const value = el.type === "checkbox" ? el.checked : el.type === "number" ? Number(el.value) || 0 : el.value.trim();
       await saveConfig(item, { [`book.${el.dataset.book}`]: value });
+      // Psionic shows a different set of fields.
+      if (el.dataset.book === "spells" && section.isConnected) redraw();
     });
   }
 
@@ -430,5 +450,26 @@ Hooks.on("renderItemSheetPF", (app, html) => {
     draw(app, tab);
   } catch (err) {
     console.error(LOG, "spellcasting section failed", err);
+  }
+});
+
+// Class sheets. Spellcasting is set on a class feature, so a class without its own
+// keeps PF1's and pf1-psionics' casting sections hidden (CSS, since pf1-psionics
+// draws its section after this hook). DESIGN.md § Feature 6 › Class spellcasting.
+Hooks.on("renderItemSheetPF", (app, html) => {
+  const item = app.item;
+  if (item?.type !== "class") return;
+  try {
+    const root = html?.[0] ?? html;
+    const casts = !!item.system?.casting?.type;
+    root.classList.toggle(`${MARKER}-nocast`, !casts);
+    root.classList.toggle(`${MARKER}-nomanifest`, !item.system?.manifesting?.progression);
+    if (casts && !root.querySelector(`.${MARKER}-class-note`)) {
+      root
+        .querySelector(".spellcasting-type")
+        ?.insertAdjacentHTML("afterend", `<p class="notes ${MARKER}-class-note">${esc(t("PF1EL.Cast.ClassNotice"))}</p>`);
+    }
+  } catch (err) {
+    console.error(LOG, "class sheet spellcasting failed", err);
   }
 });

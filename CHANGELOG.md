@@ -136,10 +136,23 @@
   the change, so linked items and picks arrive without waiting for a GM.
 
 ### Changed
+- A feature that grants a spellbook warns when its class still has spellcasting of its own.
+- **Grant a spellbook** can make a **psionic manifester** (Spellcasting Type *Psionic
+  manifesting*, with pf1-psionics active).
+- A class with no spellcasting of its own no longer shows the Spell Casting section (or
+  pf1-psionics' Manifesting section) on its sheet; a class that has it shows a line pointing to
+  class features.
+- With PF1 Enhanced Spellbooks active, a granted book's **Spellbook** setting is set in the
+  Grant block.
 - **lib-wrapper is now required** (it was recommended).
 - Changing an on-actor feature's associated class now re-runs its links.
 
 ### Fixed
+- Replacing a feature that grants a spellbook with another for the same class, in one step
+  (an archetype swap), gave the new feature a second book and split the spells. It now takes
+  over the same book, and changes other features make to that book are applied again.
+- Changing a granted book's Level Offset wiped other offsets in the caster level formula. It
+  is now one term beside the others.
 - A player leveling up their own character often got none of the level's linked items, most
   visibly an archetype's replacement feature at a level where it replaces the base one. The
   system announces a level change only on the leveling player's client, so the GM's client
