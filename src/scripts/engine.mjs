@@ -34,6 +34,7 @@ import {
   getArchetype,
 } from "./enhanced-links.mjs";
 import { SCRIPT_TAB, scriptsFor, runCreateScripts } from "./create-scripts.mjs";
+import { applyRename, renameFor } from "./renames.mjs";
 import { dedupeEnabled, dataKeys, findExisting, isManaged, referencers } from "./dedupe.mjs";
 import { hasSpellcasting, hasSpellcastingLedger, listTagOf, reconcileSpellcasting } from "./spellcasting.mjs";
 import {
@@ -391,9 +392,12 @@ async function buildDesired(actor, parent, resolve) {
     // spell-like grants stack onto an existing copy instead.
     const spelllike = cfg.mode === MODE.spelllike;
     const poolId = spelllike && Number(perDay) > 0 && POOL_IDS.includes(pool) ? pool : "";
-    // A row with create scripts makes its own variant (cold fireball), so merging
-    // it with another parent's copy would lose one version or the other.
-    const scripted = spelllike && scriptsFor(parent, SCRIPT_TAB.spellSupplements, uuid).length > 0;
+    // A row with create scripts or a rename makes its own variant (cold fireball), so
+    // merging it with another parent's copy would lose one version or the other.
+    const scripted =
+      spelllike &&
+      (scriptsFor(parent, SCRIPT_TAB.spellSupplements, uuid).length > 0 ||
+        !!renameFor(parent, SCRIPT_TAB.spellSupplements, uuid));
     let gateQty;
     let bookId;
     let needsSpelllikeBook = false;
@@ -907,6 +911,11 @@ async function reconcileParent(actor, parent, resolve) {
       }
       const built = await d.build();
       if (!built) continue;
+      // A row's new name (§ Feature 8); a pick has none.
+      if (d.kind !== "selection") {
+        const tab = d.kind === "classFeature" ? SCRIPT_TAB.classFeatures : SCRIPT_TAB.spellSupplements;
+        applyRename(built, parent, tab, d.source);
+      }
 
       // Class features and picks: one the actor already has is shared, not copied.
       if (dedupe && (d.kind === "classFeature" || d.kind === "selection")) {

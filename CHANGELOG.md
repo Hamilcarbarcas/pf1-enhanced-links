@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- **Rename on links**: a row on Class Features, Spell Supplements, or the system's
+  Supplements tab can give the item it adds a new name. The item keeps its original tag,
+  and records its original name in `flags.pf1-enhanced-links.renamedFrom`.
 - **Picking spells** in Selections: a selection's **Grant spells as** setting adds a
   picked spell as a spell-like ability (with Times/day, stacking with other copies) or
   as a class spell (in the class's spellbook, with Domain/School and Bonus spells

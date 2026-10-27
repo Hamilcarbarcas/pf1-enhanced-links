@@ -87,6 +87,23 @@ table.item-links td.item-name .el-scripts .el-script-add:hover {
   opacity: 1;
 }
 
+/* Per-row rename button, left of the script controls (§ Feature 8). */
+table.item-links td.item-name .el-rename {
+  flex: 0 0 auto;
+  margin-left: 0.35rem;
+  font-size: 0.8em;
+  opacity: 0.6;
+}
+
+table.item-links td.item-name .el-rename:hover,
+table.item-links td.item-name .el-rename.active {
+  opacity: 1;
+}
+
+table.item-links td.item-name .el-rename.active {
+  color: var(--color-text-hyperlink, #ff6400);
+}
+
 /* Archetype ("replaces class features") section */
 .enhanced-links-tab .el-archetype {
   margin-top: 0.75rem;

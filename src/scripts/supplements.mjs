@@ -16,6 +16,7 @@
 
 import { MODULE_ID } from "./enhanced-links.mjs";
 import { SCRIPT_TAB, runCreateScripts } from "./create-scripts.mjs";
+import { renameFor, renameFields } from "./renames.mjs";
 import { inTeardown } from "./engine.mjs";
 import {
   CLAIMS,
@@ -69,9 +70,10 @@ function batchFor(actorId) {
  *
  * `fresh` marks a just-created copy (setting off, or a type that isn't
  * de-duplicated): a parent already claiming another copy of the same source made
- * that one, not this one.
+ * that one, not this one. `created` marks any just-created item: only that one
+ * takes a parent's new name (§ Feature 8).
  */
-async function claim(actor, itemId, newAliases = [], { fresh = false } = {}) {
+async function claim(actor, itemId, newAliases = [], { fresh = false, created = false } = {}) {
   const item = actor.items.get(itemId);
   if (!item) return;
 
@@ -101,7 +103,17 @@ async function claim(actor, itemId, newAliases = [], { fresh = false } = {}) {
   const update = {};
   if (!Array.isArray(stored) || added.length) update[`flags.${MODULE_ID}.${CLAIMS}`] = [...claims];
   if (aliases.length !== (item.getFlag(MODULE_ID, ALIASES) ?? []).length) update[`flags.${MODULE_ID}.${ALIASES}`] = aliases;
-  if (Object.keys(update).length) await item.update(update, { render: false });
+  // The first maker with a new name renames it, before any create script runs.
+  let renamed = false;
+  if (created) {
+    const makers = fresh ? added : linking;
+    const name = makers.map((p) => renameFor(p, SCRIPT_TAB.supplements, matchOf(p).uuid)).find(Boolean);
+    if (name && name !== item.name) {
+      Object.assign(update, renameFields(item.toObject(), name));
+      renamed = true;
+    }
+  }
+  if (Object.keys(update).length) await item.update(update, renamed ? {} : { render: false });
 
   for (const parent of added) {
     await runCreateScripts({ parent, child: item, kind: SCRIPT_TAB.supplements, source: matchOf(parent).uuid });
@@ -169,7 +181,7 @@ Hooks.on("createItem", (item, options, userId) => {
   pendingAliases.delete(key);
   // A de-duplicated type reaching here is the only copy; otherwise copies are per parent.
   const fresh = !(dedupable(item.type) && dedupeEnabled());
-  enqueue(actor, () => claim(actor, item.id, aliases, { fresh }));
+  enqueue(actor, () => claim(actor, item.id, aliases, { fresh, created: true }));
 });
 
 // The system links a new supplement to a parent after creating it, which can land

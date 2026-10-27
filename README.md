@@ -151,6 +151,24 @@ Notes:
 - On the Supplements and Class Features tabs, when the actor already has the item, a
   newly added parent runs its scripts on that existing item. See below.
 
+## Renaming on links
+
+The same rows can also give the item they add a new name. Click
+<i class="fa-solid fa-i-cursor"></i> in the row's name cell, left of the script icons,
+and type the name: a *Ki Pool* supplement can arrive as *Ki Pool (Monk)*. The icon is
+highlighted while a name is set, and its tooltip shows it. Clear the box to go back to
+the original name.
+
+- The row still shows the linked item's own name.
+- Only an item the link **creates** is renamed. On the Supplements and Class Features
+  tabs, an item the actor already had keeps its name.
+- The item's tag stays the one its original name gave it, so `@resources` keys and
+  anything else keyed to the tag keep working.
+- The item remembers its original name in `flags.pf1-enhanced-links.renamedFrom`, for
+  other modules that find items by name.
+- Like scripts, a new name applies the next time the row creates its item, and a
+  renamed spell-like spell never stacks with another copy.
+
 ## No duplicate linked items
 
 PF1's own **Supplements** create a new copy every time an item linking them is added,

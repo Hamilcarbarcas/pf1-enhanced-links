@@ -17,6 +17,7 @@
  */
 
 import { decorateScriptRows, deleteScriptsFor } from "./create-scripts.mjs";
+import { decorateRenameRows, deleteRenameFor } from "./renames.mjs";
 
 export const MODULE_ID = "pf1-enhanced-links";
 const LOG = "PF1 Enhanced Links |";
@@ -458,6 +459,7 @@ function wireControls(panel, ctx) {
   const refresh = () => refreshTab(panel, ctx);
 
   decorateScriptRows(panel, { item, kind, editable: ctx.editable });
+  decorateRenameRows(panel, { item, kind, editable: ctx.editable });
 
   panel.querySelectorAll("a.delete-link").forEach((a) =>
     a.addEventListener("click", async (ev) => {
@@ -673,8 +675,11 @@ async function removeEntry({ item, kind, index }) {
     [removed] = cfg.items.splice(index, 1);
     await setSpellSupplements(item, cfg);
   }
-  // The row's create scripts go with it.
-  if (removed?.uuid) await deleteScriptsFor(item, kind, removed.uuid);
+  // The row's create scripts and rename go with it.
+  if (removed?.uuid) {
+    await deleteScriptsFor(item, kind, removed.uuid);
+    await deleteRenameFor(item, kind, removed.uuid);
+  }
 }
 
 async function updateEntryLevel({ item, kind, index, level }) {
