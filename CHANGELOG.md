@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- **Pick-named tags** in Selections: a selection's tag can name an earlier pick in braces, such as
+  `{Sorcerer Bloodline} Feat`, which reads as `Aberrant Bloodline Feat` for a character with that
+  bloodline, so one shared feature offers only the chosen bloodline's feats.
 - **Rename on links**: a row on Class Features, Spell Supplements, or the system's
   Supplements tab can give the item it adds a new name. The item keeps its original tag,
   and records its original name in `flags.pf1-enhanced-links.renamedFrom`.
@@ -149,6 +152,7 @@
   Grant block.
 - **lib-wrapper is now required** (it was recommended).
 - Changing an on-actor feature's associated class now re-runs its links.
+- **Spellcasting** and **Selections** moved from the Details tab to the Advanced tab, sorted among the other modules' sections, and are hidden until used. A **Show N more sections** line at the foot of the tab reveals them (shared sheet kit 1.7.0).
 
 ### Fixed
 - Replacing a feature that grants a spellbook with another for the same class, in one step

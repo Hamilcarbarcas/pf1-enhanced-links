@@ -747,6 +747,33 @@ function collapse(entries) {
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// "{Sorcerer Bloodline} Feat": a tag named after the actor's own pick. DESIGN.md § Pick-named tags.
+const PICK_TAG = /\{([^{}]+)\}/g;
+
+/**
+ * The row with each pick-named tag read against the actor: one tag per held item carrying the
+ * braced tag, by that item's name. A pick-named tag the actor holds nothing for is dropped.
+ */
+export function expandRow(row, actor) {
+  const tags = textList(row?.tags);
+  if (!tags.some((tag) => tag.includes("{"))) return row;
+  const items = actor?.items ? [...actor.items] : [];
+  const out = [];
+  for (const tag of tags) {
+    if (!tag.includes("{")) {
+      out.push(tag);
+      continue;
+    }
+    let forms = [tag];
+    for (const [, want] of tag.matchAll(PICK_TAG)) {
+      const names = items.filter((item) => tagsOf(item).includes(want)).map((item) => item.name);
+      forms = forms.flatMap((form) => names.map((name) => form.replace(`{${want}}`, name)));
+    }
+    out.push(...forms);
+  }
+  return { ...row, tags: [...new Set(out)] };
+}
+
 /**
  * The options a row draws from: everything carrying one of its tags, every spell on
  * its spell lists, plus what was dropped on it. Only what the current user can see.

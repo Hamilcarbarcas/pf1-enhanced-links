@@ -9,6 +9,7 @@ import {
   addPick,
   classIsOpen,
   eligibleClasses,
+  expandRow,
   isDormant,
   judgeOptions,
   openSlots,
@@ -67,7 +68,7 @@ class SelectionPicker extends HandlebarsApplicationMixin(ApplicationV2) {
     this.#rowId = slot?.row.id ?? null;
     if (!slot) return { entries: [], empty: true };
 
-    const catalog = await resolveCatalog(slot.row);
+    const catalog = await resolveCatalog(expandRow(slot.row, feature.actor));
     const judged = judgeOptions(feature, slot.row, catalog);
     // A GM may pick an option that fails its rules; anyone else can't select it.
     const override = game.user.isGM;

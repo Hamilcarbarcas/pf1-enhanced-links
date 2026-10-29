@@ -1,4 +1,4 @@
-/* PF1 Enhanced Links: the Selections section on a feature's Details tab.
+/* PF1 Enhanced Links: the Selections section on a feature's Advanced tab.
  * DESIGN.md § Feature 7. */
 
 import { MODULE_ID } from "./enhanced-links.mjs";
@@ -332,13 +332,9 @@ function draw(app, tab, old = null, { focusRow = null, focus = "tag" } = {}) {
   holder.innerHTML = sectionMarkup(item, { editable, listId: `${MARKER}-${app.appId}` });
   const section = holder.firstElementChild;
 
+  // The kit sorts it among the Advanced tab's other sections.
   if (old) old.replaceWith(section);
-  else {
-    // Above the tab's closing "Advanced" block.
-    const anchor = [...tab.querySelectorAll(":scope > h3.form-header")].at(-1);
-    if (anchor) anchor.before(section);
-    else tab.append(section);
-  }
+  else tab.append(section);
 
   const redraw = (options) => section.isConnected && draw(app, tab, section, options);
   const rowOf = (el) => el.closest("[data-row]")?.dataset.row;
@@ -540,6 +536,7 @@ function draw(app, tab, old = null, { focusRow = null, focus = "tag" } = {}) {
     configured,
     badge: badgeText(item),
     title: t("PF1EL.Cast.Toggle"),
+    niche: true,
   });
 
   if (focusRow) {
@@ -592,10 +589,11 @@ Hooks.on("renderItemSheetPF", (app, html) => {
   if (!item || !hostsSelections(item)) return;
   try {
     const root = html?.[0] ?? html;
-    const tab = root.querySelector('.tab[data-tab="details"]');
+    const tab = root.querySelector('.tab[data-tab="advanced"]');
     if (!tab) return;
-    tab.querySelector(`:scope > .${MARKER}`)?.remove();
-    draw(app, tab);
+    const body = tab.querySelector(":scope > .flexcol") ?? tab;
+    body.querySelector(`:scope > .${MARKER}`)?.remove();
+    draw(app, body);
   } catch (err) {
     console.error(LOG, "selections section failed", err);
   }

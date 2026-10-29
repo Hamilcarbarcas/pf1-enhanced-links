@@ -193,10 +193,11 @@ Turn the setting off to get PF1's normal copies back.
 
 ## Spellcasting on features
 
-The **Spellcasting** section on an item's **Details** tab does three things: it can
+The **Spellcasting** section on an item's **Advanced** tab does three things: it can
 give the actor a spellbook of its own, change the spellbook of the item's class, and
 advance another class's spellcasting the way a prestige class does. It appears on
-feats and class features, and on races.
+feats and class features, and on races. Until it's configured it's hidden: click
+**Show N more sections** at the foot of the tab to reveal it.
 
 ### Granting a spellbook
 
@@ -339,10 +340,10 @@ Notes:
 
 ## Selections
 
-The **Selections** section on a feat's **Details** tab is for features that give a
+The **Selections** section on a feat's **Advanced** tab is for features that give a
 pick from a list: a rage power, a rogue talent, a mercy. The module ships no lists
 of its own. A list is every item that carries a tag, read from the compendiums and
-world items you have installed.
+world items you have installed. Like Spellcasting, it's hidden until used.
 
 **Role** at the top of the section sets what the item does:
 
@@ -360,7 +361,11 @@ Each selection on the item has:
 - **Tags**: the item tags it draws from, such as `Rage Power`. The Pathfinder 1e
   class abilities compendium is already tagged, and the entry suggests the tags in
   use. One selection can take several tags, so a 10th-level rogue feature can accept
-  both `Rogue Talent` and `Rogue Talent, Advanced`.
+  both `Rogue Talent` and `Rogue Talent, Advanced`. A tag can name an earlier pick
+  in braces: `{Sorcerer Bloodline} Feat` reads as `Aberrant Bloodline Feat` for a
+  character holding an item named Aberrant Bloodline that carries the
+  `Sorcerer Bloodline` tag. That way one shared feature offers only the chosen
+  bloodline's feats.
 - **Picks**: how many picks it gives.
 - **Heading**: the title shown when picking. Blank uses the item's name.
 - **Class**: the class tag whose level counts, for an item with no associated class
@@ -551,9 +556,9 @@ touched.
 | Class Features | yes | class-associated items (feats, etc.) |
 | Spell Supplements — Class Spellcasting | yes | class-associated items |
 | Spell Supplements — Spell-like Abilities | no | any item that supports links |
-| Spellcasting (Details tab) – grant by class level, modify, advance | yes | class-associated items |
-| Spellcasting (Details tab) – grant by Hit Dice | no | feats and races |
-| Selections (Details tab) | no | feats |
+| Spellcasting (Advanced tab) – grant by class level, modify, advance | yes | class-associated items |
+| Spellcasting (Advanced tab) – grant by Hit Dice | no | feats and races |
+| Selections (Advanced tab) | no | feats |
 
 ## Compatibility
 
