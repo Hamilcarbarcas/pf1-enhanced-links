@@ -17,6 +17,7 @@ import {
   resolveCatalog,
   slotsOf,
 } from "./selections.mjs";
+import { onReservedUse } from "./reserved.mjs";
 
 const LOG = "PF1 Enhanced Links |";
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
@@ -237,21 +238,7 @@ export function openPicker(feature) {
   app.render({ force: true }).catch((err) => console.error(LOG, "the picker failed to open", err));
 }
 
-const isSelectUse = (actionUse) => actionUse?.action?.id === SELECT_ACTION_ID;
-
-// pf1-new-script-hooks: cancel before the attack dialog opens.
-Hooks.on("pf1PreAttackDialog", (actionUse) => {
-  if (!isSelectUse(actionUse)) return;
-  actionUse.shared.reject = true;
-  openPicker(actionUse.item);
-});
-
-// Without it the use gets this far, past the dialog. Cancel here instead.
-Hooks.on("pf1PreActionUse", (actionUse) => {
-  if (!isSelectUse(actionUse)) return;
-  openPicker(actionUse.item);
-  return false;
-});
+onReservedUse(SELECT_ACTION_ID, openPicker);
 
 // A pick reset from the sheet while the picker is open changes what it offers.
 Hooks.on("updateItem", (item, changed) => {

@@ -3,6 +3,9 @@
 
 import { MODULE_ID, getAssociatedClass } from "./enhanced-links.mjs";
 import { dedupable, sourceKeys, uniform } from "./dedupe.mjs";
+import { SELECT_ACTION_ID, reservedActions } from "./reserved.mjs";
+
+export { SELECT_ACTION_ID };
 
 // Flag keys under flags[MODULE_ID].
 export const ROLE_FLAG = "selectionRole"; // which of the two blocks is live
@@ -17,11 +20,6 @@ const GRANT_PARENT = "grantParent"; // the engine's stamp on a granted item
 const COUNT_FLAG = "picks"; // on a picked item: how many slots hold it
 const NOTE_FLAG = "selectionNote"; // on a granting feature: the description line last written
 export const HOME_FLAG = "selectionHome"; // on a moved granting feature: { from, to } subtypes
-
-// Action added to a feature while it has a pick to make. Actions carry no flags,
-// so a reserved id marks it.
-export const SELECT_ACTION_ID = "pf1elSelect";
-const SELECT_ACTION_IMG = "icons/svg/item-bag.svg";
 
 export const ROLES = ["grant", "option", "both"];
 
@@ -514,6 +512,31 @@ const maySetAside = (item) => !keepsPlace(item) && (homeSubType(item) !== FEAT |
 const asideSubType = (item) => (isFilled(item) && maySetAside(item) ? category() : null);
 
 /**
+ * How many general feats a feature's picks put on the actor as bonus feats: picks of
+ * anything but a general feat. A general feat's own feat pick takes its place instead.
+ * DESIGN.md § Bonus feats.
+ */
+export function bonusFeatCount(item) {
+  if (!grantsPicks(item) || homeSubType(item) === FEAT) return 0;
+  return pickedGrants(item).filter(({ uuid }) => {
+    const granted = grantedItem(item, uuid);
+    return !!granted && homeSubType(granted) === FEAT && !granted.system?.disabled;
+  }).length;
+}
+
+// Each bonus feat raises the actor's feat maximum by one, under the granting feature's name.
+Hooks.on("pf1AddDefaultChanges", (actor, changes) => {
+  for (const item of actor.items) {
+    if (!hostsSelections(item)) continue;
+    const count = bonusFeatCount(item);
+    if (!count) continue;
+    changes.push(
+      new pf1.components.ItemChange({ formula: String(count), target: "bonusFeats", type: "untyped", flavor: item.name })
+    );
+  }
+});
+
+/**
  * The closing line of a granting feature's description, naming each pick as a link
  * to the item it was taken from. That link is the same on every copy of the actor;
  * one to the actor's own item would have to be a full uuid and go stale on a copy.
@@ -528,16 +551,6 @@ function noteFor(slots) {
   }
   if (!links.length) return "";
   return `<p><strong>${game.i18n.localize("PF1EL.Sel.Chosen")}:</strong> ${[...new Set(links)].join(", ")}</p>`;
-}
-
-function selectActionData() {
-  return new pf1.components.ItemAction({
-    _id: SELECT_ACTION_ID,
-    name: game.i18n.localize("PF1EL.Sel.ChooseAction"),
-    img: SELECT_ACTION_IMG,
-    actionType: "other",
-    activation: { type: "nonaction", unchained: { type: "nonaction" } },
-  }).toObject();
 }
 
 /**
@@ -582,13 +595,9 @@ export async function settleSelections(actor, { skip = new Set(), dormant = fals
     const slots = slotsOf(item);
 
     // The Choose action is present exactly while a slot is open.
-    const hasAction = item.actions?.has(SELECT_ACTION_ID) === true;
     const wantAction = !dormant && slots.some((slot) => slot.open > 0);
-    if (hasAction !== wantAction) {
-      const actions = (item._source.system?.actions ?? []).filter((a) => a._id !== SELECT_ACTION_ID);
-      if (wantAction) actions.push(selectActionData());
-      touch(item)["system.actions"] = actions;
-    }
+    const actions = reservedActions(item, SELECT_ACTION_ID, wantAction);
+    if (actions) touch(item)["system.actions"] = actions;
 
     // The description line. Only text this wrote is taken out; an edited line stays.
     const note = noteFor(slots);

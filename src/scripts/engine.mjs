@@ -26,16 +26,20 @@
 import {
   MODULE_ID,
   MODE,
+  GATE_BY,
   POOL_IDS,
   POOL_FLAG,
   getClassFeatures,
   getSpellSupplements,
   getAssociatedClass,
   getArchetype,
+  isPerDayFormula,
+  resolvePerDay,
 } from "./enhanced-links.mjs";
 import { SCRIPT_TAB, scriptsFor, runCreateScripts } from "./create-scripts.mjs";
 import { applyRename, renameFor } from "./renames.mjs";
 import { dedupeEnabled, dataKeys, findExisting, isManaged, referencers } from "./dedupe.mjs";
+import { BOOK_FLAG, resolveBook, settleBookChoices } from "./supplement-book.mjs";
 import { hasSpellcasting, hasSpellcastingLedger, listTagOf, reconcileSpellcasting } from "./spellcasting.mjs";
 import {
   GRANT_AS,
@@ -168,12 +172,12 @@ function canCastLevel(actor, bookId, spellLevel) {
 }
 
 /**
- * The level a supplement spell will land at: its level on the associated class's
- * list when there is one, else its own. Shared so the gate is checked against
- * exactly the level buildSpell will write.
+ * The level a supplement spell will land at: its level on the book's class list
+ * when there is one, else its own. Shared so the gate is checked against exactly
+ * the level buildSpell will write.
  */
 function resolveSpellLevel(source, tag, mode) {
-  if (mode === MODE.class && tag) {
+  if (mode !== MODE.spelllike && tag) {
     const learned = source.system?.learnedAt?.class?.[tag];
     if (Number.isFinite(learned)) return Math.clamp(learned, 0, 9);
   }
@@ -386,12 +390,22 @@ async function buildDesired(actor, parent, resolve) {
   // Feature 2 — spell supplements. Ungated ⇒ threshold 0 (always met once a book
   // resolves), which is how the same engine serves both gated and ungated.
   const cfg = getSpellSupplements(parent);
-  for (const { uuid, level, perDay, pool } of cfg.items) {
+  let rollData = null; // the parent's, once, for formula Times/day
+  // Kind mode: one book for every row, gated on that book's class. DESIGN.md § Spellbook by kind.
+  const kindBook = cfg.mode === MODE.kind && cfg.items.length ? resolveBook(actor, parent) : null;
+  const kindBookData = kindBook ? actor.system?.attributes?.spells?.spellbooks?.[kindBook] : null;
+  // The flag gate, ANDed into every row.
+  const flagged = !cfg.requireFlag || parent.hasItemBooleanFlag?.(cfg.requireFlag) === true;
+  for (const { uuid, level, until, perDay, pool } of cfg.items) {
     const threshold = cfg.gated ? (Number.isFinite(level) ? level : 1) : 0;
+    const spelllike = cfg.mode === MODE.spelllike;
+    // Null is a formula below 1: not granted yet. DESIGN.md § Class-level gates.
+    const uses = spelllike
+      ? resolvePerDay(parent, perDay, isPerDayFormula(perDay) ? (rollData ??= parent.getRollData()) : null)
+      : null;
     // A pool only means something for a counted spell-like ability; unpooled
     // spell-like grants stack onto an existing copy instead.
-    const spelllike = cfg.mode === MODE.spelllike;
-    const poolId = spelllike && Number(perDay) > 0 && POOL_IDS.includes(pool) ? pool : "";
+    const poolId = spelllike && uses && !uses.atWill && POOL_IDS.includes(pool) ? pool : "";
     // A row with create scripts or a rename makes its own variant (cold fireball), so
     // merging it with another parent's copy would lose one version or the other.
     const scripted =
@@ -408,11 +422,18 @@ async function buildDesired(actor, parent, resolve) {
       gateQty = clvl;
       bookId = tag ? findSpellbookByClass(actor, tag) : null;
       if (bookId) listTag = listTagOf(actor, bookId) ?? tag;
+    } else if (cfg.mode === MODE.kind) {
+      bookId = kindBook;
+      const bookClass = kindBookData?.class ?? null;
+      gateQty = bookClass === "_hd" ? hdTotal(actor) : classLevel(actor, bookClass);
+      listTag = bookId ? (listTagOf(actor, bookId) ?? bookClass) : null;
     } else {
-      gateQty = hdTotal(actor);
+      gateQty = cfg.gated && cfg.gateBy === GATE_BY.class ? clvl : hdTotal(actor);
       bookId = "spelllike";
       needsSpelllikeBook = true;
     }
+    // Until is exclusive: the row is gone from that level on.
+    const belowUntil = !cfg.gated || !(until > 0) || gateQty < until;
 
     // Second gate: the destination book must actually be able to cast this spell's
     // level. Class mode only — the spell-like book is HD-driven and has no class
@@ -421,7 +442,7 @@ async function buildDesired(actor, parent, resolve) {
     // higher-level spells simply stay unmet until its own progression catches up,
     // and never arrive at all if it never reaches that level.
     let castable = true;
-    if (cfg.mode === MODE.class && cfg.requireCastable && bookId != null) {
+    if (!spelllike && cfg.requireCastable && bookId != null) {
       const source = await resolve(uuid);
       castable = !!source && canCastLevel(actor, bookId, resolveSpellLevel(source, listTag, cfg.mode));
     }
@@ -430,12 +451,14 @@ async function buildDesired(actor, parent, resolve) {
       source: uuid,
       threshold,
       kind: "spell",
-      met: bookId != null && gateQty >= threshold && castable,
+      met: bookId != null && flagged && gateQty >= threshold && belowUntil && castable && (!spelllike || !!uses),
       needsSpelllikeBook,
       pool: poolId,
       stackable: spelllike && !poolId && !scripted,
-      domain: cfg.mode === MODE.class && cfg.domain,
+      domain: !spelllike && cfg.domain,
       bonusKnown: cfg.mode === MODE.class && cfg.bonusKnown,
+      // A kind-mode grant in another book than the chosen one is granted again.
+      book: cfg.mode === MODE.kind ? bookId : undefined,
       build: () =>
         buildSpell(
           uuid,
@@ -443,10 +466,10 @@ async function buildDesired(actor, parent, resolve) {
           listTag,
           cfg.mode,
           parent.id,
-          perDay,
+          uses && !uses.atWill ? uses.n : 0,
           poolId ? `${parent.id}:${poolId}` : null,
           scripted,
-          cfg.mode === MODE.class && cfg.domain,
+          !spelllike && cfg.domain,
           cfg.mode === MODE.class && cfg.bonusKnown
         ),
     });
@@ -832,7 +855,13 @@ async function reconcileParent(actor, parent, resolve) {
     } else {
       const keep = recSources(rec).filter((s) => {
         const d = bySource.get(s);
-        return d && d.met && (rec.pool ?? "") === (d.pool ?? "") && (rec.grantAs ?? "") === (d.grantAs ?? "");
+        return (
+          d &&
+          d.met &&
+          (rec.pool ?? "") === (d.pool ?? "") &&
+          (rec.grantAs ?? "") === (d.grantAs ?? "") &&
+          (d.book === undefined || stillPresent.system?.spellbook === d.book)
+        );
       });
       if (keep.length) {
         // Domain/School follows the checkbox, but only when the checkbox changed, so
@@ -987,14 +1016,16 @@ async function reconcileParent(actor, parent, resolve) {
 }
 
 /**
- * A contributor's current Times/day for a spell-like spell, from its Spell
- * Supplements entry or, for a pick, its selection row. Null when the entry is gone.
+ * A contributor's current Times/day for a spell-like spell (0 = at will), from its
+ * Spell Supplements entry or, for a pick, its selection row. Null when the entry is
+ * gone, or its formula is below 1.
  */
 function contributedPerDay(parent, rec) {
   if (rec.kind === "selection") return pickPerDay(parent, rec.row, rec.source);
   const target = uniformUuid(rec.source);
   const entry = getSpellSupplements(parent).items.find((e) => uniformUuid(e.uuid) === target);
-  return entry ? entry.perDay ?? 0 : null;
+  const uses = entry ? resolvePerDay(parent, entry.perDay) : null;
+  return uses ? (uses.atWill ? 0 : uses.n) : null;
 }
 
 /**
@@ -1192,6 +1223,8 @@ async function reconcileActor(actor, { userId = null, force = false } = {}) {
       // What follows from the picks: the Choose action, counts, the description
       // line, and where a filled feature sits. DESIGN.md § Feature 7.
       if (await settleSelections(actor, { skip: cascading, dormant: isDormant() })) changed = true;
+      // Kind-mode book choices and their Choose action. DESIGN.md § Spellbook by kind.
+      if (await settleBookChoices(actor, { skip: cascading, dormant: isDormant() })) changed = true;
       if (changed) dirty = true;
       if (!changed) return;
       if (pass === MAX_PASSES - 1) {
@@ -1349,12 +1382,24 @@ Hooks.on("createItem", (item, options, userId) => {
 Hooks.on("updateItem", (item, changed, options, userId) => {
   const actor = item.actor;
   if (!(actor instanceof Actor)) return;
+  // A user's choices; the engine never writes a chosen book or a boolean flag.
+  const userChoice =
+    foundry.utils.hasProperty(changed, `flags.${MODULE_ID}.${PICKS_FLAG}`) ||
+    foundry.utils.hasProperty(changed, `flags.${MODULE_ID}.${BOOK_FLAG}`) ||
+    foundry.utils.hasProperty(changed, `flags.${MODULE_ID}.-=${BOOK_FLAG}`);
+  // Gates on a boolean flag of the item. DESIGN.md § Flag gate.
+  const flagGate =
+    foundry.utils.hasProperty(changed, "system.flags.boolean") && !!getSpellSupplements(item).requireFlag;
   if (busy.has(actor.id)) {
-    if (foundry.utils.hasProperty(changed, `flags.${MODULE_ID}.${PICKS_FLAG}`)) rerun.set(actor.id, userId);
+    if (userChoice || flagGate) rerun.set(actor.id, userId);
     return;
   }
   // The associated class is what every class-tied link and Advance row keys on.
-  if (foundry.utils.hasProperty(changed, `flags.${MODULE_ID}`) || foundry.utils.hasProperty(changed, "system.class")) {
+  if (
+    foundry.utils.hasProperty(changed, `flags.${MODULE_ID}`) ||
+    foundry.utils.hasProperty(changed, "system.class") ||
+    flagGate
+  ) {
     reconcileActor(actor, { userId });
   }
 });

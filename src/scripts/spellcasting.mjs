@@ -9,6 +9,9 @@
  */
 
 import { MODULE_ID, getAssociatedClass } from "./enhanced-links.mjs";
+import { CHOICE_ACTION_ID, onReservedUse, reservedActions } from "./reserved.mjs";
+
+export { CHOICE_ACTION_ID };
 
 const LOG = "PF1 Enhanced Links |";
 const PSIONICS = "pf1-psionics";
@@ -39,11 +42,6 @@ export const GRANT_KINDS = [...SPELL_KINDS, "psionic"];
 
 // Books a Grant may take. The spell-like book is never one.
 const SLOTS = ["primary", "secondary", "tertiary"];
-
-// Action added to a feature while one of its rows has no target. Actions carry no
-// flags, so a reserved id marks it.
-export const CHOICE_ACTION_ID = "pf1elSpellChoice";
-const CHOICE_ACTION_IMG = "icons/svg/book.svg";
 
 export const psionicsActive = () => game.modules.get(PSIONICS)?.active === true;
 
@@ -280,16 +278,6 @@ export function resolveRows(actor, feature) {
 }
 
 // ─── Reconcile ──────────────────────────────────────────────────────────────────
-
-function choiceActionData() {
-  return new pf1.components.ItemAction({
-    _id: CHOICE_ACTION_ID,
-    name: game.i18n.localize("PF1EL.Cast.ChooseAction"),
-    img: CHOICE_ACTION_IMG,
-    actionType: "other",
-    activation: { type: "nonaction", unchained: { type: "nonaction" } },
-  }).toObject();
-}
 
 // One run at a time per actor: the engine and the choice dialog can both ask.
 const queues = new Map();
@@ -807,12 +795,8 @@ async function runRows(actor) {
     }
 
     // The choice action is present exactly while a row is open.
-    const hasAction = feature.actions?.has(CHOICE_ACTION_ID) === true;
-    if (open > 0 !== hasAction) {
-      const actions = (feature.toObject().system?.actions ?? []).filter((a) => a._id !== CHOICE_ACTION_ID);
-      if (open > 0) actions.push(choiceActionData());
-      touch(feature.id)["system.actions"] = actions;
-    }
+    const actions = reservedActions(feature, CHOICE_ACTION_ID, open > 0);
+    if (actions) touch(feature.id)["system.actions"] = actions;
   }
 
   // Working copy of each touched formula, read from source: prepared data may be derived.
@@ -1014,22 +998,6 @@ export async function resetTarget(feature, rowId) {
   await reconcileSpellcasting(actor);
 }
 
-const isChoiceUse = (actionUse) => actionUse?.action?.id === CHOICE_ACTION_ID;
-
-const failed = (err) => console.error(LOG, "choosing a spellcasting target failed", err);
-
-// pf1-new-script-hooks: cancel before the attack dialog opens.
-Hooks.on("pf1PreAttackDialog", (actionUse) => {
-  if (!isChoiceUse(actionUse)) return;
-  actionUse.shared.reject = true;
-  chooseTargets(actionUse.item).catch(failed);
-});
-
-// Without it the use gets this far, past the dialog. Cancel here instead.
-Hooks.on("pf1PreActionUse", (actionUse) => {
-  if (!isChoiceUse(actionUse)) return;
-  chooseTargets(actionUse.item).catch(failed);
-  return false;
-});
+onReservedUse(CHOICE_ACTION_ID, chooseTargets);
 
 globalThis.pf1EnhancedLinks = { ...(globalThis.pf1EnhancedLinks ?? {}), reconcileSpellcasting, chooseTargets };

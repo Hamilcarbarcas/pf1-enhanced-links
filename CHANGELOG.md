@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Added
+- **Bonus feats** in Selections: a general feat picked by a class feature (or any item that
+  isn't itself a general feat) adds 1 to the character's feat total, so it doesn't use up a feat.
+- **Spellbook by kind** destination on Spell Supplements: an item with no class, such as a
+  magic belt, adds its spells to one of the actor's spellbooks of a chosen kind. A lone match
+  is used by itself; with several, a **Choose Spellbook** action on the item picks one.
+- **Requires flag** on Spell Supplements: spells are granted only while the item has that
+  boolean flag.
+- **Usable only while worn** on Spell Supplements of physical items: the spells can't be used
+  while the item is unequipped, and stay prepared.
+- **Class-level gates for spell-like abilities**: on a class feature, Spell Supplements' new
+  **Gate on** dropdown can count the item's class level instead of Hit Dice (still the default).
+- **Until** level on gated Spell Supplements rows: the spell is removed when the gate reaches it,
+  so one spell can give way to another (*darkness* to *deeper darkness*).
+- **Formula Times/day** on spell-like Spell Supplements, such as `floor((@class.level - 1) / 2)`.
+  A formula below 1 means not granted yet, never at will.
 - **Pick-named tags** in Selections: a selection's tag can name an earlier pick in braces, such as
   `{Sorcerer Bloodline} Feat`, which reads as `Aberrant Bloodline Feat` for a character with that
   bloodline, so one shared feature offers only the chosen bloodline's feats.
@@ -142,6 +157,8 @@
   the change, so linked items and picks arrive without waiting for a GM.
 
 ### Changed
+- An item's Choose actions (Selection, Spellcasting, Spellbook) always sit together after its own
+  actions, in that order.
 - A feature that grants a spellbook warns when its class still has spellcasting of its own.
 - **Grant a spellbook** can make a **psionic manifester** (Spellcasting Type *Psionic
   manifesting*, with pf1-psionics active).
@@ -152,7 +169,7 @@
   Grant block.
 - **lib-wrapper is now required** (it was recommended).
 - Changing an on-actor feature's associated class now re-runs its links.
-- **Spellcasting** and **Selections** moved from the Details tab to the Advanced tab, sorted among the other modules' sections, and are hidden until used. A **Show N more sections** line at the foot of the tab reveals them (shared sheet kit 1.7.0).
+- **Spellcasting** and **Selections** moved from the Details tab to the Advanced tab, sorted among the other modules' sections, and are hidden until used. Tick them under **Optional Sections** on the same tab to show them (shared sheet kit 1.8.0).
 
 ### Fixed
 - Replacing a feature that grants a spellbook with another for the same class, in one step

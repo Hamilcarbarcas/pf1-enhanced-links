@@ -3,16 +3,8 @@
 
 import { MODULE_ID } from "./enhanced-links.mjs";
 import { reconcileForced } from "./engine.mjs";
-import {
-  HOME_FLAG,
-  PICKS_FLAG,
-  PICK_CLASS_FLAG,
-  SELECT_ACTION_ID,
-  isDormant,
-  setDormant,
-  slotsOf,
-} from "./selections.mjs";
-import { CHOICE_ACTION_ID } from "./spellcasting.mjs";
+import { HOME_FLAG, PICKS_FLAG, PICK_CLASS_FLAG, isDormant, setDormant, slotsOf } from "./selections.mjs";
+import { RESERVED_IDS } from "./reserved.mjs";
 
 const LOG = "PF1 Enhanced Links |";
 const { ApplicationV2, HandlebarsApplicationMixin, DialogV2 } = foundry.applications.api;
@@ -21,7 +13,7 @@ const { ApplicationV2, HandlebarsApplicationMixin, DialogV2 } = foundry.applicat
 // so it is listed whether or not this module is on.
 const PARKED = "misc";
 // Actions the engine adds to items. Without the module they would be dead buttons.
-const RESERVED = new Set([SELECT_ACTION_ID, CHOICE_ACTION_ID]);
+const RESERVED = RESERVED_IDS;
 
 const flag = (key) => `flags.${MODULE_ID}.${key}`;
 const homeOf = (item) => item.flags?.[MODULE_ID]?.[HOME_FLAG];

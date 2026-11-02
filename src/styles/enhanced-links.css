@@ -37,6 +37,15 @@
   margin: 0;
 }
 
+.enhanced-links-tab input.el-require-flag {
+  width: 9em;
+}
+
+.enhanced-links-tab .el-book-stale {
+  font-style: italic;
+  color: var(--color-level-warning, #a5670b);
+}
+
 .enhanced-links-tab .el-warning {
   display: flex;
   align-items: center;
@@ -50,9 +59,15 @@
   text-align: center;
 }
 
-.enhanced-links-tab input.el-level {
+.enhanced-links-tab input.el-level,
+.enhanced-links-tab input.el-until {
   width: 3.5em;
   text-align: center;
+}
+
+/* Room for a short formula such as floor((@class.level - 1) / 2). */
+.enhanced-links-tab input.el-perday {
+  width: 8em;
 }
 
 .enhanced-links-tab select.el-pool {

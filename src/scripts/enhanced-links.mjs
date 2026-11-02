@@ -18,13 +18,16 @@
 
 import { decorateScriptRows, deleteScriptsFor } from "./create-scripts.mjs";
 import { decorateRenameRows, deleteRenameFor } from "./renames.mjs";
+import { SPELL_KINDS, kindLabel } from "./spellcasting.mjs";
+import { bookStatus, resetBook } from "./supplement-book.mjs";
 
 export const MODULE_ID = "pf1-enhanced-links";
 const LOG = "PF1 Enhanced Links |";
 
 // Flag keys, stored under flags[MODULE_ID] on the configured item.
 //   classFeatures    → [{ uuid, level }]
-//   spellSupplements → { mode, gated, items: [{ uuid, level }] }
+//   spellSupplements → { mode, kind, gated, gateBy, requireFlag, requireWorn,
+//                        items: [{ uuid, level, until?, perDay, pool? }] }
 // (`granted` — the teardown ledger — is owned by the Phase 2 engine.)
 const FLAG = {
   classFeatures: "classFeatures",
@@ -51,7 +54,13 @@ const TAB_META = {
 };
 
 // Spell-supplement routing modes.
-export const MODE = { class: "class", spelllike: "spelllike" };
+export const MODE = { class: "class", spelllike: "spelllike", kind: "kind" };
+
+// Book kinds kind mode routes to. DESIGN.md § Spellbook by kind.
+export const BOOK_KINDS = [...SPELL_KINDS, "any"];
+
+// What a gated spell-like list counts. DESIGN.md § Class-level gates.
+export const GATE_BY = { hd: "hd", class: "class" };
 
 // Spell-like pools: entries sharing an id share one Times/day count.
 export const POOL_IDS = ["A", "B", "C"];
@@ -85,19 +94,52 @@ export function getClassFeatures(item) {
  * config that predates the option gains the check too — a spell whose level the
  * destination book cannot yet cast is held back until it can.
  *
- * An item that can't be class-tied is always spell-like, whatever is stored: the
- * tab shows it that way, and an untouched dropdown stores no mode at all.
+ * An item that can't be class-tied is spell-like unless it routes by kind, whatever
+ * is stored: the tab shows it that way, and an untouched dropdown stores no mode.
  */
 export function getSpellSupplements(item) {
   const raw = item.getFlag(MODULE_ID, FLAG.spellSupplements) ?? {};
+  let mode = raw.mode === MODE.spelllike || !canClassAssociate(item) ? MODE.spelllike : MODE.class;
+  if (raw.mode === MODE.kind && canRouteByKind(item)) mode = MODE.kind;
   return {
-    mode: raw.mode === MODE.spelllike || !canClassAssociate(item) ? MODE.spelllike : MODE.class,
+    mode,
+    kind: BOOK_KINDS.includes(raw.kind) ? raw.kind : "divine", // kind mode only
+    requireFlag: typeof raw.requireFlag === "string" ? raw.requireFlag.trim() : "",
+    requireWorn: raw.requireWorn === true && item.isPhysical === true,
     gated: raw.gated === true,
+    // Spell-like mode only. An item that can't be class-tied always counts Hit Dice.
+    gateBy: raw.gateBy === GATE_BY.class && canClassAssociate(item) ? GATE_BY.class : GATE_BY.hd,
     requireCastable: raw.requireCastable !== false,
     domain: raw.domain === true, // class mode only: grants are Domain/School spells
     bonusKnown: raw.bonusKnown === true, // class mode only: grants don't count against spells known
     items: Array.isArray(raw.items) ? foundry.utils.deepClone(raw.items) : [],
   };
+}
+
+/** Whether a stored Times/day is a formula rather than a whole number. */
+export function isPerDayFormula(perDay) {
+  return typeof perDay === "string" && perDay.trim().length > 0 && !/^\d+$/.test(perDay.trim());
+}
+
+/**
+ * A Times/day as uses: `{ n, atWill }`. A number is a count, 0 at will. A formula
+ * is rolled on the parent's roll data (which carries @class) and is never at will:
+ * below 1 it returns null, not granted yet. DESIGN.md § Class-level gates.
+ */
+export function resolvePerDay(parent, perDay, rollData = null) {
+  if (!isPerDayFormula(perDay)) {
+    const n = Math.max(0, Math.floor(Number(perDay) || 0));
+    return { n, atWill: n === 0 };
+  }
+  const total = pf1.dice.RollPF.safeRollSync(perDay.trim(), rollData ?? parent.getRollData()).total;
+  const n = Math.floor(Number(total) || 0);
+  return n >= 1 ? { n, atWill: false } : null;
+}
+
+/** A Times/day input's value: a whole number (blank = 0), or the formula text. */
+function readPerDay(input) {
+  const text = String(input?.value ?? "").trim();
+  return isPerDayFormula(text) ? text : Math.floor(Number(text) || 0);
 }
 
 /**
@@ -152,6 +194,11 @@ export function getAssociatedClass(item) {
  */
 function canClassAssociate(item) {
   return item.type === "feat";
+}
+
+/** Kind mode needs actions on the item, to carry the Choose Spellbook action. */
+function canRouteByKind(item) {
+  return item.hasActions === true;
 }
 
 /** Whether this item type can host links (has the system's links template). */
@@ -215,7 +262,9 @@ async function resolveEntries(list, { sorted = false } = {}) {
     rows.push({
       uuid: entry.uuid,
       level: Number.isFinite(entry.level) ? entry.level : 1,
-      perDay: Number.isFinite(entry.perDay) ? entry.perDay : 0, // 0 = at will (spell-like only)
+      until: Number.isFinite(entry.until) && entry.until > 0 ? entry.until : "", // blank = no bound
+      // 0 = at will (spell-like only); a formula shows as typed.
+      perDay: isPerDayFormula(entry.perDay) ? entry.perDay : Number.isFinite(entry.perDay) ? entry.perDay : 0,
       pool,
       poolOptions: POOL_IDS.map((id) => ({ id, selected: id === pool })),
       index,
@@ -379,22 +428,36 @@ async function buildContext(item, editable, kind) {
 
   const cfg = getSpellSupplements(item);
   const canClass = canClassAssociate(item);
-  // Class Spellcasting is only selectable where the item can be class-tied;
-  // otherwise fall back to displaying spell-like regardless of the stored value.
-  const effectiveMode = canClass ? cfg.mode : MODE.spelllike;
+  const canKind = canRouteByKind(item);
+  const effectiveMode = cfg.mode;
+  const book = effectiveMode === MODE.kind ? bookStatus(item) : null;
   return {
     tabId: TAB.spellSupplements,
     help: game.i18n.localize("PF1EL.Help.SpellSupplements"),
     editable,
     canClass,
     gated: cfg.gated,
+    // Class mode always counts class level; only a gated spell-like list chooses.
+    showGateBy: canClass && cfg.gated && effectiveMode === MODE.spelllike,
+    gateByClass: cfg.gateBy === GATE_BY.class,
     // Castability is a property of a class spellbook's progression; the spell-like
     // book is HD-driven and shares none, so the control only shows in class mode.
     requireCastable: cfg.requireCastable,
     domain: cfg.domain,
     bonusKnown: cfg.bonusKnown,
+    canKind,
     isClassMode: effectiveMode === MODE.class,
     isSpelllikeMode: effectiveMode === MODE.spelllike,
+    isKindMode: effectiveMode === MODE.kind,
+    // Castable and Domain/School apply to any real spellbook.
+    isBookMode: effectiveMode !== MODE.spelllike,
+    // Without class or kind routing there is nothing but spell-like abilities.
+    onlySpelllike: !canClass && !canKind,
+    kindOptions: BOOK_KINDS.map((id) => ({ id, label: kindLabel(id), selected: id === cfg.kind })),
+    requireFlag: cfg.requireFlag,
+    showWorn: item.isPhysical === true,
+    requireWorn: cfg.requireWorn,
+    book,
     // Ungated, the level column is hidden and the numbers are meaningless — leave
     // those in the order they were dropped.
     items: await resolveEntries(cfg.items, { sorted: cfg.gated }),
@@ -492,11 +555,52 @@ function wireControls(panel, ctx) {
   });
 
   if (kind === "spellSupplements") {
+    panel.querySelector("select.el-gate-by")?.addEventListener("change", async (ev) => {
+      const cfg = getSpellSupplements(item);
+      cfg.gateBy = ev.currentTarget.value === GATE_BY.class ? GATE_BY.class : GATE_BY.hd;
+      await setSpellSupplements(item, cfg);
+    });
+    // Blank or 0 = no bound.
+    panel.querySelectorAll("input.el-until").forEach((input) =>
+      input.addEventListener("change", async (ev) => {
+        const index = Number(ev.currentTarget.dataset.index);
+        const until = readLevel(ev.currentTarget);
+        const cfg = getSpellSupplements(item);
+        const entry = cfg.items[index];
+        if (!entry) return;
+        if (until > 0) entry.until = until;
+        else delete entry.until;
+        await setSpellSupplements(item, cfg);
+      })
+    );
     panel.querySelector("select.el-mode")?.addEventListener("change", async (ev) => {
       const cfg = getSpellSupplements(item);
-      cfg.mode = ev.currentTarget.value === MODE.spelllike ? MODE.spelllike : MODE.class;
+      const value = ev.currentTarget.value;
+      cfg.mode = Object.values(MODE).includes(value) ? value : MODE.class;
       await setSpellSupplements(item, cfg);
       await refresh(); // toggles the times/day column
+    });
+    panel.querySelector("select.el-kind")?.addEventListener("change", async (ev) => {
+      const cfg = getSpellSupplements(item);
+      cfg.kind = BOOK_KINDS.includes(ev.currentTarget.value) ? ev.currentTarget.value : "divine";
+      await setSpellSupplements(item, cfg);
+    });
+    panel.querySelector("input.el-require-flag")?.addEventListener("change", async (ev) => {
+      const cfg = getSpellSupplements(item);
+      // Flag names are update-path keys, so no dots or spaces.
+      cfg.requireFlag = String(ev.currentTarget.value ?? "").trim().replace(/[\s.]+/g, "");
+      ev.currentTarget.value = cfg.requireFlag;
+      await setSpellSupplements(item, cfg);
+    });
+    panel.querySelector("input.el-require-worn")?.addEventListener("change", async (ev) => {
+      const cfg = getSpellSupplements(item);
+      cfg.requireWorn = ev.currentTarget.checked;
+      await setSpellSupplements(item, cfg);
+    });
+    panel.querySelector("a.el-book-reset")?.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      await resetBook(item);
+      await refresh();
     });
     panel.querySelector("input.el-gated")?.addEventListener("change", async (ev) => {
       const cfg = getSpellSupplements(item);
@@ -530,7 +634,7 @@ function wireControls(panel, ctx) {
     panel.querySelectorAll("input.el-perday").forEach((input) =>
       input.addEventListener("change", async (ev) => {
         const index = Number(ev.currentTarget.dataset.index);
-        const perDay = Math.max(0, Math.floor(Number(ev.currentTarget.value) || 0));
+        const perDay = readPerDay(ev.currentTarget);
         const cfg = getSpellSupplements(item);
         const entry = cfg.items[index];
         if (!entry) return;
@@ -744,10 +848,12 @@ Hooks.on("renderActorSheetPF", (app, html) => {
       let line = parent.name;
       if (cfg.mode === MODE.spelllike) {
         const entry = cfg.items.find((e) => uniform(e.uuid) === uniform(rec.source));
-        const n = Math.max(0, Math.floor(Number(entry?.perDay) || 0));
-        if (entry) {
-          const uses = n > 0 ? game.i18n.format("PF1EL.Grant.PerDay", { n }) : game.i18n.localize("PF1EL.Grant.AtWill");
-          line = `${parent.name} (${uses})`;
+        const uses = entry ? resolvePerDay(parent, entry.perDay) : null;
+        if (uses) {
+          const text = uses.atWill
+            ? game.i18n.localize("PF1EL.Grant.AtWill")
+            : game.i18n.format("PF1EL.Grant.PerDay", { n: uses.n });
+          line = `${parent.name} (${text})`;
         }
       }
       if (!grants.has(itemId)) grants.set(itemId, []);

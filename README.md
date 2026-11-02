@@ -45,13 +45,31 @@ Drop **spells** here and pick a **destination**:
 - **Class Spellcasting** — the spells join the spellbook provided by the item's
   associated class.
 - **Spell-like Abilities** — the spells join the actor's spell-like abilities book.
+- **Spellbook by kind** – the spells join one of the actor's spellbooks of a chosen
+  **Kind** (arcane, divine, psychic, alchemy, or any), for an item with no class, such
+  as a magic belt. With one such spellbook in use, it is picked by itself. With
+  several, the item gets a **Choose Spellbook** action: use it to pick one. On the
+  actor's copy of the item, the tab shows the chosen book, with a button to choose
+  again. Not offered on races, classes, or containers, which can't have actions.
+
+When an item needs more than one choice, its Choose actions sit together after the
+item's own actions.
 
 A **Level gating** checkbox controls whether entries are gated. When enabled, each
 spell appears once the gate is met — the associated class's level (Class
-Spellcasting) or the actor's Hit Dice (Spell-like Abilities). When disabled, the
-spells are present whenever the item is on the actor.
+Spellcasting), the chosen spellbook's class level (Spellbook by kind), or the actor's
+Hit Dice (Spell-like Abilities). When disabled, the spells are present whenever the
+item is on the actor.
 
-A **Require castable level** checkbox (Class Spellcasting only, **on by default**)
+On a class feature in **Spell-like Abilities** mode, a **Gate on** dropdown picks what
+the levels count: the actor's **Hit Dice** (the default) or the item's **Class level**,
+for a class ability such as a shadowdancer's *darkness*.
+
+With gating on, each row also has an **Until** level: the spell is removed when the
+gate reaches it, so another row can take over. Leave it blank to keep the spell.
+
+A **Require castable level** checkbox (Class Spellcasting and Spellbook by kind,
+**on by default**)
 adds a second condition: the spell also waits until the destination spellbook can
 cast that spell level. This is what lets a single feature serve both a full and a
 partial caster. Give each spell the level gate the full caster should get it at; the
@@ -67,7 +85,8 @@ granted spells vanish and reappear. (For a spellbook set to manual slots the sys
 has no progression to consult and allows levels by caster type alone — up to 4th for
 low, 6th for medium — so on those books the entry's own level gate does the pacing.)
 
-A **Domain/School spells** checkbox (Class Spellcasting only, off by default) marks
+A **Domain/School spells** checkbox (Class Spellcasting and Spellbook by kind, off by
+default) marks
 every spell this item grants as a Domain/School spell, the same setting as on the
 spell's own sheet. Changing the checkbox later updates spells already on the actor.
 A spell you toggle by hand keeps your setting until the checkbox changes again.
@@ -80,9 +99,38 @@ that level's offset. It is added when the spell arrives and removed with it. Lea
 book's **Domain/School Slots** at 0 for these. It has no effect on a class that
 prepares spells, or on spells also marked Domain/School.
 
+A **Requires flag** field, in any mode, holds every spell back until the item has
+that boolean flag, added on the Advanced tab of the actor's copy. Removing the flag
+takes the spells away, along with any preparations of them. Leave it blank to grant
+as usual.
+
+On a physical item, **Usable only while worn** refuses to use these spells while the
+item is unequipped. The spells stay on the actor, prepared as they were. A spell-like
+ability several items grant can still be used if any of them is worn or doesn't
+need to be.
+
+For example, a belt whose wearer can give 4th- and 5th-level divine slots to it is
+one stand-in spell per level, with **Spellbook by kind** set to Divine, **Requires
+flag** set to `attuned`, and **Usable only while worn** ticked. The wearer prepares
+the stand-ins in ordinary slots once the GM adds the `attuned` flag.
+
 In **Spell-like Abilities** mode each spell also gets a **Times/day** value that
 sets its uses per day on the actor (0 = at-will). Changing it later updates the
 spell already on the actor.
+
+Times/day can also be a formula, worked out from the item's roll data, so `@class.level`
+is the item's class level. A formula never makes a spell at will: below 1, the spell
+isn't granted yet. The count is worked out again when a level changes, the item is
+edited, or a spellbook changes, so base it on levels. A formula on an ability modifier
+won't follow a buff until one of those happens.
+
+For example, a shadowdancer gets *darkness* 1/day at 3rd level, 2/day at 5th, and
+*deeper darkness* 3/day at 7th. With **Gate on** set to Class level, that's two rows:
+
+| Spell | Level | Until | Times/day |
+|---|---|---|---|
+| *Darkness* | 3 | 7 | `floor((@class.level - 1) / 2)` |
+| *Deeper darkness* | 7 | | `3` |
 
 **Pools.** Spell-like spells can share one daily count ("1/day — *enlarge person*
 or *reduce person*"): pick the same **Pool** (A, B or C) on each row. A pool has a
@@ -196,8 +244,7 @@ Turn the setting off to get PF1's normal copies back.
 The **Spellcasting** section on an item's **Advanced** tab does three things: it can
 give the actor a spellbook of its own, change the spellbook of the item's class, and
 advance another class's spellcasting the way a prestige class does. It appears on
-feats and class features, and on races. Until it's configured it's hidden: click
-**Show N more sections** at the foot of the tab to reveal it.
+feats and class features, and on races. Until it's configured it's hidden: tick it under **Optional Sections** on the same tab.
 
 ### Granting a spellbook
 
@@ -500,6 +547,16 @@ count stays right:
 
 Use the first shape for a feat whose choice needs its own item for each option.
 
+### Bonus feats
+
+When a class feature or another non-feat item picks a general feat, the picked feat
+is a bonus feat: it doesn't use up one of the character's feats. Each one adds 1 to
+the character's feat total, listed under the granting feature's name in the feat
+count's tooltip. An open pick adds nothing until it is made.
+
+Don't give such a feature a **Bonus Feats** change of its own, or the feat counts
+twice.
+
 ### Using another module's category
 
 A module with a category of its own can have filled features moved there. It
@@ -556,6 +613,7 @@ touched.
 | Class Features | yes | class-associated items (feats, etc.) |
 | Spell Supplements — Class Spellcasting | yes | class-associated items |
 | Spell Supplements — Spell-like Abilities | no | any item that supports links |
+| Spell Supplements – Spellbook by kind | no | items with actions (not races, classes, or containers) |
 | Spellcasting (Advanced tab) – grant by class level, modify, advance | yes | class-associated items |
 | Spellcasting (Advanced tab) – grant by Hit Dice | no | feats and races |
 | Selections (Advanced tab) | no | feats |

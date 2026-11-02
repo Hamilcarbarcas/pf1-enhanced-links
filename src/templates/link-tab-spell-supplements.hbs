@@ -13,15 +13,39 @@
         <option value="spelllike" {{#if isSpelllikeMode}}selected{{/if}}>
           {{localize "PF1EL.Mode.Spelllike"}}
         </option>
+        <option value="kind" {{#if isKindMode}}selected{{/if}} {{#unless canKind}}disabled{{/unless}}>
+          {{localize "PF1EL.Mode.Kind"}}
+        </option>
       </select>
     </label>
+
+    {{#if isKindMode}}
+    <label class="el-control">
+      <span>{{localize "PF1EL.Kind.Label"}}</span>
+      <select class="el-kind" {{#unless editable}}disabled{{/unless}}>
+        {{#each kindOptions}}
+        <option value="{{id}}" {{#if selected}}selected{{/if}}>{{label}}</option>
+        {{/each}}
+      </select>
+    </label>
+    {{/if}}
 
     <label class="el-control el-checkbox">
       <input type="checkbox" class="el-gated" {{#if gated}}checked{{/if}} {{#unless editable}}disabled{{/unless}}>
       <span>{{localize "PF1EL.Gating.Label"}}</span>
     </label>
 
-    {{#if isClassMode}}
+    {{#if showGateBy}}
+    <label class="el-control">
+      <span>{{localize "PF1EL.GateBy.Label"}}</span>
+      <select class="el-gate-by" {{#unless editable}}disabled{{/unless}}>
+        <option value="hd" {{#unless gateByClass}}selected{{/unless}}>{{localize "PF1EL.GateBy.Hd"}}</option>
+        <option value="class" {{#if gateByClass}}selected{{/if}}>{{localize "PF1EL.GateBy.Class"}}</option>
+      </select>
+    </label>
+    {{/if}}
+
+    {{#if isBookMode}}
     <label class="el-control el-checkbox" data-tooltip="PF1EL.Castable.Hint">
       <input type="checkbox" class="el-castable" {{#if requireCastable}}checked{{/if}}
         {{#unless editable}}disabled{{/unless}}>
@@ -32,24 +56,56 @@
       <input type="checkbox" class="el-domain" {{#if domain}}checked{{/if}} {{#unless editable}}disabled{{/unless}}>
       <span>{{localize "PF1EL.Domain.Label"}}</span>
     </label>
+    {{/if}}
 
+    {{#if isClassMode}}
     <label class="el-control el-checkbox" data-tooltip="PF1EL.BonusKnown.Hint">
       <input type="checkbox" class="el-bonus-known" {{#if bonusKnown}}checked{{/if}} {{#unless editable}}disabled{{/unless}}>
       <span>{{localize "PF1EL.BonusKnown.Label"}}</span>
     </label>
     {{/if}}
+
+    <label class="el-control" data-tooltip="PF1EL.RequireFlag.Hint">
+      <span>{{localize "PF1EL.RequireFlag.Label"}}</span>
+      <input type="text" class="el-require-flag" value="{{requireFlag}}" {{#unless editable}}disabled{{/unless}}>
+    </label>
+
+    {{#if showWorn}}
+    <label class="el-control el-checkbox" data-tooltip="PF1EL.Worn.Hint">
+      <input type="checkbox" class="el-require-worn" {{#if requireWorn}}checked{{/if}} {{#unless editable}}disabled{{/unless}}>
+      <span>{{localize "PF1EL.Worn.Label"}}</span>
+    </label>
+    {{/if}}
+
+    {{#if book}}
+    <span class="el-control el-book">
+      <span>{{localize "PF1EL.Book.Label"}}</span>
+      {{#if book.chosen}}
+      <span class="el-book-name{{#unless book.live}} el-book-stale{{/unless}}"
+        {{#unless book.live}}data-tooltip="PF1EL.Book.Stale"{{/unless}}>{{book.label}}</span>
+      {{#if editable}}
+      <a class="el-book-reset" data-tooltip="PF1EL.Book.Reset"><i class="fa-solid fa-rotate-left"></i></a>
+      {{/if}}
+      {{else}}
+      <span class="el-book-name el-book-stale">{{localize "PF1EL.Book.NotChosen"}}</span>
+      {{/if}}
+    </span>
+    {{/if}}
   </div>
 
-  {{#unless canClass}}
+  {{#if onlySpelllike}}
   <div class="el-warning">
     <i class="fa-solid fa-triangle-exclamation"></i> {{localize "PF1EL.Warning.NoClassSpell"}}
   </div>
-  {{/unless}}
+  {{/if}}
 
   <table class="item-links">
     <tr>
       <th>{{localize "PF1.Item"}}</th>
-      {{#if gated}}<th class="extra-field">{{localize "PF1EL.Field.Level"}}</th>{{/if}}
+      {{#if gated}}
+      <th class="extra-field">{{localize "PF1EL.Field.Level"}}</th>
+      <th class="extra-field" data-tooltip="PF1EL.UntilHint">{{localize "PF1EL.Field.Until"}}</th>
+      {{/if}}
       {{#if isSpelllikeMode}}
       <th class="extra-field">{{localize "PF1EL.Field.PerDay"}}</th>
       <th class="extra-field" data-tooltip="PF1EL.PoolHint">{{localize "PF1EL.Field.Pool"}}</th>
@@ -74,10 +130,14 @@
         <input class="el-level" type="number" min="0" step="1" value="{{level}}" data-index="{{index}}"
           {{#unless @root.editable}}disabled{{/unless}}>
       </td>
+      <td class="extra-field">
+        <input class="el-until" type="number" min="0" step="1" value="{{until}}" data-index="{{index}}"
+          data-tooltip="PF1EL.UntilHint" {{#unless @root.editable}}disabled{{/unless}}>
+      </td>
       {{/if}}
       {{#if @root.isSpelllikeMode}}
       <td class="extra-field">
-        <input class="el-perday" type="number" min="0" step="1" value="{{perDay}}" data-index="{{index}}"
+        <input class="el-perday" type="text" value="{{perDay}}" data-index="{{index}}"
           data-tooltip="PF1EL.PerDayHint" {{#unless @root.editable}}disabled{{/unless}}>
       </td>
       <td class="extra-field">
