@@ -51,6 +51,8 @@ import {
   settleSelections,
   slotsOf,
 } from "./selections.mjs";
+import { gatedLinks, hasGatedSupplements, statsOf } from "./supplement-prereqs.mjs";
+import { meets } from "./prereq-rules.mjs";
 
 const LOG = "PF1 Enhanced Links |";
 const MAX_PASSES = 10;
@@ -214,6 +216,28 @@ async function buildFromSource(uuid) {
 function stampGrant(data, source, parentId) {
   foundry.utils.setProperty(data, `flags.${MODULE_ID}.${GRANT_SOURCE}`, source);
   foundry.utils.setProperty(data, `flags.${MODULE_ID}.${GRANT_PARENT}`, parentId);
+}
+
+/**
+ * A gated system supplement, built the way the system's _createSupplements builds one
+ * (source flag, inherited class link), plus our provenance. DESIGN.md § Feature 9.
+ */
+async function buildSupplement(uuid, parent) {
+  const built = await buildFromSource(uuid);
+  if (!built) return null;
+  const { source, data } = built;
+  foundry.utils.setProperty(data, "flags.pf1.source", uuid);
+  const classLink = parent.system?.class;
+  if (classLink && source.type === "feat" && source.system?.subType === "classFeat") data.system.class = classLink;
+  stampGrant(data, uuid, parent.id);
+  return data;
+}
+
+/** The links tab a desired entry's renames and create scripts belong to. */
+function tabOf(kind) {
+  if (kind === "classFeature") return SCRIPT_TAB.classFeatures;
+  if (kind === "supplement") return SCRIPT_TAB.supplements;
+  return SCRIPT_TAB.spellSupplements;
 }
 
 async function buildClassFeature(uuid, tag, parentId) {
@@ -533,6 +557,21 @@ async function buildDesired(actor, parent, resolve) {
     });
   }
 
+  // Feature 9 — system supplements with prerequisites. Ungated ones stay the system's.
+  const gated = gatedLinks(parent);
+  if (gated.length) {
+    const stats = statsOf(actor);
+    for (const { uuid, prereq } of gated) {
+      out.push({
+        source: uuid,
+        threshold: 0,
+        kind: "supplement",
+        met: meets(prereq, stats),
+        build: () => buildSupplement(uuid, parent),
+      });
+    }
+  }
+
   return out;
 }
 
@@ -764,6 +803,7 @@ async function beginTeardown(actor, cls, userId) {
 function isConfiguredParent(item) {
   if (hasSpellcasting(item)) return true;
   if (slotsOf(item).length) return true;
+  if (hasGatedSupplements(item)) return true;
   const cf = item.getFlag(MODULE_ID, "classFeatures");
   if (Array.isArray(cf) && cf.length) return true;
   const ss = item.getFlag(MODULE_ID, "spellSupplements");
@@ -941,13 +981,10 @@ async function reconcileParent(actor, parent, resolve) {
       const built = await d.build();
       if (!built) continue;
       // A row's new name (§ Feature 8); a pick has none.
-      if (d.kind !== "selection") {
-        const tab = d.kind === "classFeature" ? SCRIPT_TAB.classFeatures : SCRIPT_TAB.spellSupplements;
-        applyRename(built, parent, tab, d.source);
-      }
+      if (d.kind !== "selection") applyRename(built, parent, tabOf(d.kind), d.source);
 
-      // Class features and picks: one the actor already has is shared, not copied.
-      if (dedupe && (d.kind === "classFeature" || d.kind === "selection")) {
+      // Class features, picks and gated supplements: one the actor already has is shared, not copied.
+      if (dedupe && (d.kind === "classFeature" || d.kind === "selection" || d.kind === "supplement")) {
         const existing = findExisting(actor, built);
         if (existing && !cascading.has(existing.id)) {
           reference(existing, d);
@@ -1009,8 +1046,7 @@ async function reconcileParent(actor, parent, resolve) {
   for (const [child, d] of fresh) {
     // A selection row carries no create scripts.
     if (d.kind === "selection") continue;
-    const kind = d.kind === "classFeature" ? SCRIPT_TAB.classFeatures : SCRIPT_TAB.spellSupplements;
-    await runCreateScripts({ parent, child, kind, source: d.source });
+    await runCreateScripts({ parent, child, kind: tabOf(d.kind), source: d.source });
   }
   return changed;
 }
@@ -1395,10 +1431,14 @@ Hooks.on("updateItem", (item, changed, options, userId) => {
     return;
   }
   // The associated class is what every class-tied link and Advance row keys on.
+  // A Supplements row added or removed on a parent with gated rows or grants (§ Feature 9).
+  const supplementRows =
+    foundry.utils.hasProperty(changed, "system.links.supplements") && (hasGatedSupplements(item) || hasLedger(item));
   if (
     foundry.utils.hasProperty(changed, `flags.${MODULE_ID}`) ||
     foundry.utils.hasProperty(changed, "system.class") ||
-    flagGate
+    flagGate ||
+    supplementRows
   ) {
     reconcileActor(actor, { userId });
   }
@@ -1413,6 +1453,11 @@ Hooks.on("updateItem", (item, changed, options, userId) => {
 Hooks.on("updateActor", (actor, changed, options, userId) => {
   if (busy.has(actor.id)) return;
   if (foundry.utils.hasProperty(changed, "system.attributes.spells")) reconcileActor(actor, { userId });
+  // Skill ranks gate supplements (§ Feature 9). BAB and HD move with class levels,
+  // which pf1ClassLevelChange already covers.
+  else if (foundry.utils.hasProperty(changed, "system.skills") && actor.items.some(hasGatedSupplements)) {
+    reconcileActor(actor, { userId });
+  }
 });
 
 // An item was removed. An archetype restores what it replaced; a grant

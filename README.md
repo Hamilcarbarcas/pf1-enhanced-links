@@ -239,6 +239,30 @@ is shared rather than granted a second time.
 
 Turn the setting off to get PF1's normal copies back.
 
+## Prerequisites on supplements
+
+A row on PF1's own **Supplements** tab can wait for the character to qualify. Click
+<i class="fa-solid fa-lock-open"></i> in the row's name cell and set any of:
+
+- **Minimum BAB**
+- **Minimum Hit Dice**
+- **Skill ranks**: one row per skill, all of them required. A skill with subskills (Craft,
+  Perform, Profession) counts its highest one. **Knowledge (any)** counts the highest
+  Knowledge skill.
+
+The lock turns solid and highlighted, and its tooltip lists the requirements. On an item
+already on a character, it also says what's still short.
+
+- The supplement isn't added with the item. It arrives as soon as every requirement is
+  met, and is removed again if one stops being met (ranks retrained, a level lost).
+- Blank fields aren't checked. **Clear** removes them all, and the supplement goes back to
+  arriving with the item.
+- If another item on the character links the same supplement without requirements, that
+  item adds it as usual.
+- Renames and create scripts on the row still apply when the supplement arrives.
+- A character's existing copy of the item doesn't pick up rows added in the compendium later;
+  a fresh copy does.
+
 ## Spellcasting on features
 
 The **Spellcasting** section on an item's **Advanced** tab does three things: it can

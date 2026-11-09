@@ -605,3 +605,43 @@ li.item.pf1el-sel-pending .item-name h4 a.pf1el-sel-tag:hover {
 .pf1el-cast-nomanifest h3.form-header + p.info + .spellcasting-progression {
   display: none;
 }
+
+/* Per-row prerequisites button on the system's Supplements tab (§ Feature 9). */
+table.item-links td.item-name .el-prereq {
+  flex: 0 0 auto;
+  margin-left: 0.35rem;
+  font-size: 0.8em;
+  opacity: 0.6;
+}
+
+table.item-links td.item-name .el-prereq:hover,
+table.item-links td.item-name .el-prereq.active {
+  opacity: 1;
+}
+
+table.item-links td.item-name .el-prereq.active {
+  color: var(--color-text-hyperlink, #ff6400);
+}
+
+.el-prereq-dialog .el-prereq-editor fieldset {
+  margin: 0.5rem 0;
+}
+
+.el-prereq-dialog .el-prereq-skill {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  margin-bottom: 0.3rem;
+}
+
+.el-prereq-dialog .el-prereq-skill select {
+  flex: 1 1 auto;
+}
+
+.el-prereq-dialog .el-prereq-skill input[type="number"] {
+  flex: 0 0 5rem;
+}
+
+.el-prereq-dialog .el-prereq-add {
+  font-size: 0.9em;
+}

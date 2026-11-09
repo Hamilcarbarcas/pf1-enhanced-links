@@ -18,6 +18,7 @@ import { MODULE_ID } from "./enhanced-links.mjs";
 import { SCRIPT_TAB, runCreateScripts } from "./create-scripts.mjs";
 import { renameFor, renameFields } from "./renames.mjs";
 import { inTeardown } from "./engine.mjs";
+import { heldBack } from "./supplement-prereqs.mjs";
 import {
   CLAIMS,
   ALIASES,
@@ -149,6 +150,8 @@ Hooks.on("preCreateItem", (doc, _data, options, userId) => {
   const actor = doc.parent;
   const source = doc.getFlag("pf1", "source");
   if (!(actor instanceof Actor) || !source) return;
+  // Gated by every parent linking it: the engine grants it once met (§ Feature 9).
+  if (heldBack(actor, source)) return false;
   if (!dedupable(doc.type) || !dedupeEnabled()) return;
 
   const data = doc.toObject();

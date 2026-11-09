@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- **Prerequisites on supplements**: a row on the system's Supplements tab can require a
+  minimum BAB, Hit Dice, or skill ranks. The supplement arrives once they're met and is removed
+  when they stop being met.
 - **Bonus feats** in Selections: a general feat picked by a class feature (or any item that
   isn't itself a general feat) adds 1 to the character's feat total, so it doesn't use up a feat.
 - **Spellbook by kind** destination on Spell Supplements: an item with no class, such as a
