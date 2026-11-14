@@ -11,6 +11,7 @@ export { SELECT_ACTION_ID };
 export const ROLE_FLAG = "selectionRole"; // which of the two blocks is live
 export const ROWS_FLAG = "selections"; // granting feature: its rows
 export const KEEP_FLAG = "selectionKeep"; // granting feature: stay in place when filled
+export const NEST_FLAG = "selectionNestUnder"; // granting feature: uuid of the item it is listed under
 export const OPTION_FLAG = "option"; // option: its pick rules
 export const PICKS_FLAG = "selectionPicks"; // on-actor granting feature: { [rowId]: [uuid] }
 // Beside it, pick for pick: the class tag chosen for each, "" where none was. { [rowId]: [tag] }
@@ -188,6 +189,12 @@ function spellLevelOf(value, fallback) {
 }
 
 export const keepsPlace = (item) => flagsOf(item)[KEEP_FLAG] === true;
+
+/** The uuid of the item a granting feature, and its picks, are listed under; null for none. § Feature 10 */
+export function nestUnderOf(item) {
+  const uuid = flagsOf(item)[NEST_FLAG];
+  return typeof uuid === "string" && uuid ? uuid : null;
+}
 
 /** An option's pick rules, normalized. All blank while its role doesn't cover them. */
 export function getOption(source) {
@@ -491,7 +498,7 @@ const FEAT = "feat";
 /** The subtype an item has when it isn't set aside. */
 const homeSubType = (item) => flagsOf(item)[HOME_FLAG]?.from ?? item.system?.subType;
 
-/** Whether one of a feature's picks is a general feat, which then holds the feat slot. */
+/** Whether one of a feature's picks is a general feat, which can then stand in for it. */
 function pickedAFeat(item) {
   return slotsOf(item).some(({ picks }) =>
     picks.some((uuid) => {
@@ -503,38 +510,16 @@ function pickedAFeat(item) {
 
 /**
  * Whether a filled feature may be set aside. One marked Keep in place may not. A
- * general feat may only when a general feat was picked in its place: the system
- * counts feats by subtype, so exactly one of the two should count.
+ * general feat may only when a general feat was picked in its place; that pick
+ * then counts as the feat (children.mjs). Signature Skill style feats that should
+ * stay listed are marked Keep in place, and their picks nest under them for free.
  */
 const maySetAside = (item) => !keepsPlace(item) && (homeSubType(item) !== FEAT || pickedAFeat(item));
 
 /** The subtype a filled feature moves to. Null leaves it where it is. */
 const asideSubType = (item) => (isFilled(item) && maySetAside(item) ? category() : null);
 
-/**
- * How many general feats a feature's picks put on the actor as bonus feats: picks of
- * anything but a general feat. A general feat's own feat pick takes its place instead.
- * DESIGN.md § Bonus feats.
- */
-export function bonusFeatCount(item) {
-  if (!grantsPicks(item) || homeSubType(item) === FEAT) return 0;
-  return pickedGrants(item).filter(({ uuid }) => {
-    const granted = grantedItem(item, uuid);
-    return !!granted && homeSubType(granted) === FEAT && !granted.system?.disabled;
-  }).length;
-}
-
-// Each bonus feat raises the actor's feat maximum by one, under the granting feature's name.
-Hooks.on("pf1AddDefaultChanges", (actor, changes) => {
-  for (const item of actor.items) {
-    if (!hostsSelections(item)) continue;
-    const count = bonusFeatCount(item);
-    if (!count) continue;
-    changes.push(
-      new pf1.components.ItemChange({ formula: String(count), target: "bonusFeats", type: "untyped", flavor: item.name })
-    );
-  }
-});
+// Bonus feats from picks are counted by children.mjs, with every other child feat.
 
 /**
  * The closing line of a granting feature's description, naming each pick as a link

@@ -642,6 +642,80 @@ table.item-links td.item-name .el-prereq.active {
   flex: 0 0 5rem;
 }
 
+.el-prereq-dialog .el-prereq-skill input[name="sub"] {
+  flex: 0 1 9rem;
+}
+
+.el-prereq-dialog .el-prereq-skill input[name="sub"][hidden] {
+  display: none;
+}
+
+.el-prereq-dialog .el-prereq-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.el-prereq-dialog .el-prereq-any {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: auto;
+  font-size: 0.9em;
+}
+
+.el-prereq-dialog .el-prereq-features {
+  list-style: none;
+  margin: 0 0 0.3rem;
+  padding: 0;
+}
+
+.el-prereq-dialog .el-prereq-feature {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  margin-bottom: 0.2rem;
+}
+
+.el-prereq-dialog .el-prereq-drop {
+  border: 1px dashed var(--color-border-light-tertiary, #999);
+  border-radius: 4px;
+  padding: 0.3rem;
+  margin-bottom: 0.3rem;
+  text-align: center;
+  font-size: 0.9em;
+  opacity: 0.8;
+}
+
 .el-prereq-dialog .el-prereq-add {
   font-size: 0.9em;
+}
+
+/* Child items nested under their parent on the Features tab (§ Feature 10). */
+.pf1.actor .feats-body li.item.pf1el-child > .item-name {
+  padding-left: calc(var(--pf1el-depth, 1) * 1.1rem);
+}
+
+.pf1.actor .feats-body li.item.pf1el-child > .item-name::before {
+  content: "\21B3";
+  margin-right: 0.25rem;
+  opacity: 0.5;
+}
+
+/* "Granted by" on a child item's own sheet. */
+.pf1.sheet.item header.sheet-header li.pf1el-granted-by {
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+
+.pf1.sheet.item header.sheet-header li.pf1el-granted-by a {
+  text-decoration: underline dotted;
+}
+
+.pf1.sheet.item header.sheet-header ul.pf1el-summary {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }

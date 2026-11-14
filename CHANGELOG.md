@@ -4,10 +4,18 @@
 
 ### Added
 - **Prerequisites on supplements**: a row on the system's Supplements tab can require a
-  minimum BAB, Hit Dice, or skill ranks. The supplement arrives once they're met and is removed
-  when they stop being met.
-- **Bonus feats** in Selections: a general feat picked by a class feature (or any item that
-  isn't itself a general feat) adds 1 to the character's feat total, so it doesn't use up a feat.
+  minimum BAB, Hit Dice, skill or subskill ranks, or features the character has. Skill and
+  feature lists can be set to "any one is enough." The supplement arrives once they're met and
+  is removed when they stop being met.
+- **Child items**: a pick, supplement, or other granted item is listed under the item that
+  granted it on the Features tab when both are in the same section, and its sheet names that
+  item under **Granted by**. A child that is a general feat adds 1 to the character's feat total,
+  so it doesn't use up a feat, whatever granted it: a class feature, a racial trait, or another
+  feat. A feat that steps aside for its pick still counts once, through the pick.
+- **Nest under** on a Selections granting feature: drop the feature that describes the choice
+  ("Rage Powers"), and the granting feature and its picks are listed under it on the Features tab.
+- **Sub-feats hidden in the Feats browser**: feats tagged `Sub-Feat` are left out of the Feats
+  compendium browser until **Show sub-feats** is ticked, or the tag is chosen in the Tags filter.
 - **Spellbook by kind** destination on Spell Supplements: an item with no class, such as a
   magic belt, adds its spells to one of the actor's spellbooks of a chosen kind. A lone match
   is used by itself; with several, a **Choose Spellbook** action on the item picks one.
@@ -158,6 +166,8 @@
   module, and Undo preparation resumes it.
 - With no GM connected, the engine now runs on the client of the player who made
   the change, so linked items and picks arrive without waiting for a GM.
+- `pf1EnhancedLinks.reconcileForced(actor)` for other modules: reconciles an actor's grants
+  now and resolves once they have settled.
 
 ### Changed
 - An item's Choose actions (Selection, Spellcasting, Spellbook) always sit together after its own

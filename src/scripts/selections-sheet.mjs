@@ -6,6 +6,7 @@ import { makeCollapsible, setBadge } from "../common/sheet/collapse.mjs";
 import {
   GRANT_AS,
   KEEP_FLAG,
+  NEST_FLAG,
   OPTION_FLAG,
   ROLE_FLAG,
   ROWS_FLAG,
@@ -19,6 +20,7 @@ import {
   hostsSelections,
   isDormant,
   keepsPlace,
+  nestUnderOf,
   openSlots,
   pickedFor,
   resetPick,
@@ -209,6 +211,10 @@ function grantMarkup(item, { editable, tagList }) {
         keepsPlace(item) ? " checked" : ""
       }${editable ? "" : " disabled"}/> ${t("PF1EL.Sel.Keep")}</label>
     </div>
+    <div class="form-group stacked" data-tooltip="PF1EL.Sel.NestHint">
+      <label>${t("PF1EL.Sel.NestUnder")}</label>
+      ${dropListMarkup(nestUnderOf(item) ? [nestUnderOf(item)] : [], "nest", "PF1EL.Sel.DropNest", editable && !nestUnderOf(item))}
+    </div>
     <datalist id="${tagList}">${options}</datalist>
     <datalist id="${spellList}">${spellOptions}</datalist>`;
 }
@@ -307,7 +313,8 @@ async function droppedDocument(event, item, kind) {
   }
   const folderOk = kind === "list" && data?.type === "Folder";
   if (!data?.uuid || (data.type !== "Item" && !folderOk)) {
-    ui.notifications.warn(t(kind === "list" ? "PF1EL.Sel.Warn.ListedOnly" : "PF1EL.Sel.Warn.RequiresOnly"));
+    const warning = { list: "PF1EL.Sel.Warn.ListedOnly", nest: "PF1EL.Sel.Warn.NestOnly" }[kind] ?? "PF1EL.Sel.Warn.RequiresOnly";
+    ui.notifications.warn(t(warning));
     return null;
   }
   const doc = await fromUuid(data.uuid).catch(() => null);
@@ -350,6 +357,11 @@ function draw(app, tab, old = null, { focusRow = null, focus = "tag" } = {}) {
     const kind = el.closest("[data-kind]")?.dataset.kind;
     if (kind === "list") return editRow(rowOf(el), (row) => (row.list = change(row.list)));
     if (kind === "requires") return save(item, { [`${OPTION_FLAG}.requires`]: change(getOption(item).requires) });
+    // One item at most: a drop replaces it.
+    if (kind === "nest") {
+      const current = nestUnderOf(item);
+      return save(item, { [NEST_FLAG]: change(current ? [current] : []).at(-1) ?? null });
+    }
   };
 
   section.querySelector("[data-role]")?.addEventListener("change", async (ev) => {

@@ -51,7 +51,7 @@ import {
   settleSelections,
   slotsOf,
 } from "./selections.mjs";
-import { gatedLinks, hasGatedSupplements, statsOf } from "./supplement-prereqs.mjs";
+import { gatedLinks, hasGatedSupplements, hasFeatureGates, statsOf } from "./supplement-prereqs.mjs";
 import { meets } from "./prereq-rules.mjs";
 
 const LOG = "PF1 Enhanced Links |";
@@ -1405,13 +1405,19 @@ Hooks.on("pf1ClassLevelChange", (actor) => {
 });
 
 // A configured parent was added (mid-campaign drop, or ungated grants on arrival),
-// or an archetype or a class it can be linked under.
+// an archetype or a class it can be linked under, or any item a feature gate may name.
 Hooks.on("createItem", (item, options, userId) => {
   const actor = item.actor;
-  if (!(actor instanceof Actor) || busy.has(actor.id)) return;
+  if (!(actor instanceof Actor)) return;
+  const featureGate = actor.items.some(hasFeatureGates);
+  if (busy.has(actor.id)) {
+    // The running reconcile sees its own creations; another user's lands after it.
+    if (featureGate && userId !== game.user.id) rerun.set(actor.id, userId);
+    return;
+  }
   const linksArchetype =
     isArchetype(item) || (item.type === "class" && actor.items.some((it) => isArchetype(it)));
-  if (isConfiguredParent(item) || linksArchetype) reconcileActor(actor, { userId });
+  if (isConfiguredParent(item) || linksArchetype || featureGate) reconcileActor(actor, { userId });
 });
 
 // Config edited on an item already on the actor (levels, mode, gating, entries).
@@ -1426,8 +1432,12 @@ Hooks.on("updateItem", (item, changed, options, userId) => {
   // Gates on a boolean flag of the item. DESIGN.md § Flag gate.
   const flagGate =
     foundry.utils.hasProperty(changed, "system.flags.boolean") && !!getSpellSupplements(item).requireFlag;
+  // An item switched on or off, for feature gates (§ Feature 9).
+  const activeGate =
+    ["system.disabled", "system.active", "system.equipped"].some((p) => foundry.utils.hasProperty(changed, p)) &&
+    actor.items.some(hasFeatureGates);
   if (busy.has(actor.id)) {
-    if (userChoice || flagGate) rerun.set(actor.id, userId);
+    if (userChoice || flagGate || activeGate) rerun.set(actor.id, userId);
     return;
   }
   // The associated class is what every class-tied link and Advance row keys on.
@@ -1438,6 +1448,7 @@ Hooks.on("updateItem", (item, changed, options, userId) => {
     foundry.utils.hasProperty(changed, `flags.${MODULE_ID}`) ||
     foundry.utils.hasProperty(changed, "system.class") ||
     flagGate ||
+    activeGate ||
     supplementRows
   ) {
     reconcileActor(actor, { userId });
@@ -1499,6 +1510,9 @@ Hooks.on("deleteItem", async (item, options, userId) => {
   // A removed feature's spellcasting terms come back out of the books it advanced.
   if (hasSpellcastingLedger(actor, item.id)) return void reconcileActor(actor, { userId });
 
+  // A feature gate may have named it (§ Feature 9).
+  if (actor.items.some(hasFeatureGates)) return void reconcileActor(actor, { userId });
+
   // A grant hand-deleted while its parent still lives → re-heal (the gate may still
   // be met). If the parent is gone this was cascade teardown — nothing to do.
   const parentId = item.getFlag(MODULE_ID, GRANT_PARENT);
@@ -1532,7 +1546,8 @@ Hooks.on("updateItem", (item, changed, options, userId) => {
 // Expose for console debugging alongside the Phase 1 accessors.
 /**
  * Reconcile an actor on this client now, whoever the primary GM is and whether or
- * not the module is paused, and resolve once it has settled. For the uninstall menu.
+ * not the module is paused, and resolve once it has settled. For the uninstall menu
+ * and other modules (astora-mod Item Sync), via `pf1EnhancedLinks.reconcileForced`.
  */
 export async function reconcileForced(actor) {
   const idle = async () => {
@@ -1544,4 +1559,4 @@ export async function reconcileForced(actor) {
   await idle();
 }
 
-globalThis.pf1EnhancedLinks = { ...(globalThis.pf1EnhancedLinks ?? {}), reconcileActor };
+globalThis.pf1EnhancedLinks = { ...(globalThis.pf1EnhancedLinks ?? {}), reconcileActor, reconcileForced };

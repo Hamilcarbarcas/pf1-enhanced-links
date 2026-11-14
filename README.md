@@ -246,15 +246,24 @@ A row on PF1's own **Supplements** tab can wait for the character to qualify. Cl
 
 - **Minimum BAB**
 - **Minimum Hit Dice**
-- **Skill ranks**: one row per skill, all of them required. A skill with subskills (Craft,
-  Perform, Profession) counts its highest one. **Knowledge (any)** counts the highest
-  Knowledge skill.
+- **Skill ranks**: one row per skill. For a skill with subskills (Craft, Perform,
+  Profession, Artistry, Lore), name a subskill such as **Alchemy** to require that one's
+  ranks. Leave it blank and the highest subskill counts. **Knowledge (any)** counts the
+  highest Knowledge skill.
+- **Features**: drop items the character must have, such as **Dodge** or **Rage**. The
+  character's copy counts whether it came from that compendium entry or is a different item
+  of the same type and name. A disabled feature, an inactive buff, or an unequipped item
+  doesn't count.
+
+Each list has an **Any one is enough** box. Unticked, every row is required. Ticked, one
+is enough (**Dodge** or **Mobility**). BAB and Hit Dice are always required.
 
 The lock turns solid and highlighted, and its tooltip lists the requirements. On an item
 already on a character, it also says what's still short.
 
 - The supplement isn't added with the item. It arrives as soon as every requirement is
-  met, and is removed again if one stops being met (ranks retrained, a level lost).
+  met, and is removed again if one stops being met (ranks retrained, a level lost, a
+  required feature removed or disabled). When it comes back, it's a fresh copy.
 - Blank fields aren't checked. **Clear** removes them all, and the supplement goes back to
   arriving with the item.
 - If another item on the character links the same supplement without requirements, that
@@ -450,6 +459,11 @@ Each selection on the item has:
 **Keep in place when filled** is for an item that should stay where it is on the
 sheet after its picks are made.
 
+**Nest under** takes one dropped item, usually the feature that describes the
+choice ("Rage Powers" for each "Rage Power (lvl N)"). On a character that has it,
+the granting feature and its picks are listed under it on the Features tab. See
+[Child items](#child-items).
+
 One item gives its picks at one level. A class that grants a rage power at 2nd, 4th,
 and 6th level needs three granting features, one at each level.
 
@@ -560,26 +574,17 @@ once the module is off. See [Before turning the module off](#before-turning-the-
 
 ### Feats that grant a pick
 
-A general feat can grant picks too, and needs no associated class. What happens
-once its pick is made depends on what was picked, so that the character's feat
-count stays right:
+A general feat can grant picks too, and needs no associated class. Either way it
+counts as one feat:
 
-| The pick is | The granting feat | Example |
+| The feat | Once its pick is made | Example |
 |---|---|---|
-| a general feat | steps aside, and the picked feat is the one that counts | Signature Skill, with one feat per skill to pick from |
-| anything else | stays, and still counts as a feat | Extra Rogue Talent, which picks a class feature |
+| picks a general feat | steps aside to Hidden Features, and the picked feat counts in its place | Weapon Trick, picking Weapon Trick (Polearms) |
+| picks a general feat, with **Keep in place** | stays and counts; the pick is listed under it, free | Signature Skill, with its per-skill sub-feats |
+| picks anything else | stays and counts | Extra Rogue Talent, which picks a class feature |
 
-Use the first shape for a feat whose choice needs its own item for each option.
-
-### Bonus feats
-
-When a class feature or another non-feat item picks a general feat, the picked feat
-is a bonus feat: it doesn't use up one of the character's feats. Each one adds 1 to
-the character's feat total, listed under the granting feature's name in the feat
-count's tooltip. An open pick adds nothing until it is made.
-
-Don't give such a feature a **Bonus Feats** change of its own, or the feat counts
-twice.
+Anything further down (the picked feat's own supplements) is free. See
+[Child items](#child-items).
 
 ### Using another module's category
 
@@ -609,6 +614,36 @@ not searched for, and only yours are offered.
 
 These settings limit tag searches only. An item or folder dropped on a selection
 is always listed.
+
+## Child items
+
+An item another item brought onto the character is that item's **child**: a pick
+from Selections, a system Supplement, a grant from the Class Features tab, a class's
+own level-up feature, or anything linked by hand on the system's Children tab.
+
+- **Listed under its parent.** On the Features tab, a child in the same section as
+  its parent is moved under it and indented. A child in another section (a feat
+  picked by a class feature) stays where it is.
+- **Listed under a describing feature.** A granting feature with **Nest under** set
+  is listed under that item, and so are its picks, even once the feature has moved
+  to Hidden Features. This is for display only: it changes no feat count, and
+  **Granted by** still names the granting feature.
+- **Says what granted it.** A child's own sheet shows **Granted by** with its
+  parent's name in the header. Click the name to open the parent.
+- **Free feats.** A child that is a general feat doesn't use up one of the
+  character's feats. Each one adds 1 to the feat total, listed under its parent's
+  name in the feat count's tooltip. An open pick adds nothing until it is made,
+  and a disabled child adds nothing.
+
+Don't give an item a **Bonus Feats** change for a feat it supplements or picks, or
+the feat counts twice.
+
+## Sub-feats in the compendium browser
+
+A feat tagged **Sub-Feat** is one listing of a feat chosen through its parent, such as
+Signature Skill (Acrobatics) or Weapon Focus (Axes). The Feats browser leaves these out,
+name searches included, until **Show sub-feats** is ticked in its filters, or **Sub-Feat** is
+chosen in the Tags filter. A Selections pick still offers them.
 
 ## Before turning the module off
 
