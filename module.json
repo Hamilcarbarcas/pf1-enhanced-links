@@ -41,6 +41,7 @@
     "src/scripts/supplements.mjs",
     "src/scripts/children.mjs",
     "src/scripts/sub-feats.mjs",
+    "src/scripts/roll-data.mjs",
     "src/scripts/spellcasting-sheet.mjs",
     "src/scripts/selections-sheet.mjs",
     "src/scripts/selections-sources.mjs",

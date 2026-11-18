@@ -18,7 +18,7 @@ export const PICKS_FLAG = "selectionPicks"; // on-actor granting feature: { [row
 export const PICK_CLASS_FLAG = "selectionPickClass";
 const GRANTED = "granted"; // the engine's ledger on a parent
 const GRANT_PARENT = "grantParent"; // the engine's stamp on a granted item
-const COUNT_FLAG = "picks"; // on a picked item: how many slots hold it
+export const COUNT_FLAG = "picks"; // on a picked item: how many slots hold it
 const NOTE_FLAG = "selectionNote"; // on a granting feature: the description line last written
 export const HOME_FLAG = "selectionHome"; // on a moved granting feature: { from, to } subtypes
 
@@ -352,26 +352,42 @@ function identifierOf(type, name) {
  * The level a pick is judged at: the level the feature was gained at, else the
  * current level of its class, else Hit Dice. DESIGN.md § Slot level.
  */
-export function slotLevel(feature, row, depth = 0) {
+export function slotLevel(feature, row) {
   const actor = feature.actor;
+  const known = gainedLevel(feature);
+  if (known !== null) return known;
+  const tag = row?.levelClass || getAssociatedClass(feature);
+  if (tag) return actor.classes?.[tag]?.level ?? 0;
+  return actor.system?.attributes?.hd?.total ?? 0;
+}
+
+/**
+ * The level an on-actor item was gained at, or null when nothing records one:
+ * its class association, the slot that picked it, or the Class Features row
+ * that made it. Read by `@item.slotLevel` (roll-data.mjs).
+ */
+export function gainedLevel(feature, depth = 0) {
+  const actor = feature.actor;
+  if (!actor) return null;
   for (const cls of actor.itemTypes?.class ?? []) {
     const level = Number(cls.getFlag("pf1", "links.classAssociations")?.[feature.id]);
     if (level > 0) return level;
   }
-  // Picked itself: judged as the slot that picked it.
+  // Picked itself: the level of the slot that picked it.
   const from = depth < 5 ? pickedFor(feature) : null;
   if (from) {
+    const level = gainedLevel(from.feature, depth + 1);
+    if (level !== null) return level;
+    // A slot with no recorded level of its own is judged at its class's level.
     const fromRow = getSelections(from.feature).find((r) => r.id === from.rowId);
-    return slotLevel(from.feature, fromRow, depth + 1);
+    const tag = fromRow?.levelClass || getAssociatedClass(from.feature);
+    return tag ? actor.classes?.[tag]?.level ?? 0 : actor.system?.attributes?.hd?.total ?? 0;
   }
   // Made by a Class Features row: the level on that row.
   const parent = actor.items.get(flagsOf(feature)[GRANT_PARENT]);
   const threshold = Number(flagsOf(parent)[GRANTED]?.[feature.id]?.threshold);
   if (threshold > 0) return threshold;
-
-  const tag = row?.levelClass || getAssociatedClass(feature);
-  if (tag) return actor.classes?.[tag]?.level ?? 0;
-  return actor.system?.attributes?.hd?.total ?? 0;
+  return null;
 }
 
 /**

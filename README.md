@@ -572,6 +572,25 @@ is still sent to that player.
 A feature left in the Hidden Features category is listed nowhere on the sheet
 once the module is off. See [Before turning the module off](#before-turning-the-module-off).
 
+### Formulas on granted items
+
+Three values are added to an item's roll data on an actor, for its Changes and for
+formulas other modules read through it, such as roll-bonuses:
+
+- `@item.slotLevel`: the level the item was gained at. For a picked item, that's
+  the level of the feature that picked it. For an item a class or a Class Features
+  row grants, it's the level on that link. It's 0 when nothing records a level.
+- `@item.pickCount`: how many slots hold a repeatable pick, and 1 for anything else.
+- `@item.countSince.<tag>`: how many of the actor's active items carry the tag
+  and were gained at or after this item's level. The tag is written the way
+  `@tagCount` writes it: `Weapon Training` is `@item.countSince.weaponTraining`.
+  A repeatable pick counts once per slot.
+
+A fighter's weapon training group gains +1 for each weapon training feature from
+the level it was picked at onward. With the Weapon Training (lvl N) slots tagged
+`Weapon Training`, its bonus is `@item.countSince.weaponTraining`, and a level an
+archetype takes away is simply not counted.
+
 ### Feats that grant a pick
 
 A general feat can grant picks too, and needs no associated class. Either way it

@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- **Formulas on granted items**: `@item.slotLevel` (the level an item was gained at; for a pick,
+  the level of the slot that picked it), `@item.pickCount` (how many slots hold a repeatable
+  pick), and `@item.countSince.<tag>` (the actor's items with that tag gained at or after this
+  item's level) in an item's roll data, for Changes and roll-bonuses formulas.
 - **Prerequisites on supplements**: a row on the system's Supplements tab can require a
   minimum BAB, Hit Dice, skill or subskill ranks, or features the character has. Skill and
   feature lists can be set to "any one is enough." The supplement arrives once they're met and
