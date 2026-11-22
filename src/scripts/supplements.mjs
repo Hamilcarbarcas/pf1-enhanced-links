@@ -19,6 +19,7 @@ import { SCRIPT_TAB, runCreateScripts } from "./create-scripts.mjs";
 import { renameFor, renameFields } from "./renames.mjs";
 import { inTeardown } from "./engine.mjs";
 import { heldBack } from "./supplement-prereqs.mjs";
+import "./supplement-levels.mjs"; // class rows' starting level and HP (§ Feature 12)
 import {
   CLAIMS,
   ALIASES,

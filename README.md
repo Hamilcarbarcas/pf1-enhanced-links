@@ -272,6 +272,28 @@ already on a character, it also says what's still short.
 - A character's existing copy of the item doesn't pick up rows added in the compendium later;
   a fresh copy does.
 
+## Class level and HP on supplements
+
+A class on PF1's own **Supplements** tab can arrive at a set level, with set HP. Use it for
+racial Hit Dice: a race links its racial class, which arrives with as many levels as the race
+has Hit Dice. Click <i class="fa-solid fa-layer-group"></i> in the class row's name cell and
+set:
+
+- **Level**: the level the class is added at. Its class features up to that level are added
+  with it.
+- **HP**: the class's hit points. A number or a formula: `@level` is the level above, `@hd`
+  the class's hit die size. It starts filled in with `@level * (@hd + 1) / 2`, the die's
+  average per level (4.5 for a d8), rounded down; clear it to keep the class's own HP.
+
+Blank fields keep the class's own. The button shows the level once set, and its tooltip shows
+both.
+
+- Both are set once, when the class is added. Changing the row later doesn't change classes
+  already on characters.
+- If the character already has that class, it isn't added again and keeps its level and HP.
+- If the world's health settings work out HP automatically for that kind of class, PF1 uses
+  its own number instead.
+
 ## Spellcasting on features
 
 The **Spellcasting** section on an item's **Advanced** tab does three things: it can
@@ -292,6 +314,10 @@ and its spells stay in it, the same as when a class is removed.
 - **Spell list** is a class tag, such as `wizard`. It decides the level a spell gets
   when you add it to the book, and the class the spell browser pre-selects. Blank
   uses the book's own class.
+- **Highest spell level** stops the list short, for a class that reads another
+  class's list only up to a level: a warpriest uses the cleric list to 6th. A spell
+  added above it is still added, with a warning, and Spell Supplements never grant
+  one. Blank means no limit.
 - **Type**, **Progression**, **Spellcasting Ability**, **Spellcasting Type**,
   **Domain/School Slots**, **Level Offset**, and **Has Cantrips/Orisons** are the
   same settings a class has.
@@ -335,7 +361,7 @@ Every setting starts at **No change**. Only the ones you set are touched:
 - **Spellcasting Ability**, **Type**, **Progression**, **Spellcasting Type**,
   **Has Cantrips/Orisons**, and **Domain/School Slots** replace the book's value.
 - **Spell list** makes the book read another class's spell list, as described
-  above.
+  above, and **Highest spell level** caps it.
 - The **Offsets** are added to the book's own formulas, beside anything already
   there: **Level Offset** to caster level, **Cast Per Day** and **Prepared / Known**
   to every spell level.
@@ -643,6 +669,13 @@ own level-up feature, or anything linked by hand on the system's Children tab.
 - **Listed under its parent.** On the Features tab, a child in the same section as
   its parent is moved under it and indented. A child in another section (a feat
   picked by a class feature) stays where it is.
+- **Collapsible.** Click the caret beside a parent's first child to hide its
+  children. A short row with the caret and the number of hidden items takes their
+  place. Hover over it to see their names, and click it to show them again. Each
+  user's collapsed parents are remembered on every device they log in from.
+- **Left out of section counts.** With Little Helper's section counts on, a
+  section's **Count** skips items listed under a parent. Hover over it to see the
+  count with them.
 - **Listed under a describing feature.** A granting feature with **Nest under** set
   is listed under that item, and so are its picks, even once the feature has moved
   to Hidden Features. This is for display only: it changes no feat count, and

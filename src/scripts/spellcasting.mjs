@@ -31,6 +31,8 @@ export const MANIFESTERS_FLAG = "spellcastingManifesters";
 export const MODS_FLAG = "spellcastingMods";
 // On the actor: { [bookId]: "<class tag>" }, a book's spell list when not its class's
 export const LISTS_FLAG = "bookLists";
+// On the actor: { [bookId]: n }, the highest spell level on a book's list, when capped
+export const MAX_FLAG = "bookMaxLevels";
 
 export const KINDS = ["arcane", "divine", "psychic", "alchemy", "any", "psionic"];
 export const WHENS = ["all", "except", "only"];
@@ -66,6 +68,13 @@ export const hostsSpellcasting = (item) => item.type === "feat" || item.type ===
 
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 
+/** A spell level cap from config: 0-9, or null for none (blank, unset, or not a number). */
+const levelCap = (v) => {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) ? Math.clamp(n, 0, 9) : null;
+};
+
 /** Spellcasting config on an item, normalized. */
 export function getSpellcasting(item) {
   const raw = item.getFlag(MODULE_ID, CAST_FLAG) ?? {};
@@ -74,6 +83,7 @@ export function getSpellcasting(item) {
     name: String(b.name ?? "").trim(),
     levelSource: b.levelSource === "hd" || !canClassTie(item) ? "hd" : "class",
     listTag: String(b.listTag ?? "").trim(),
+    maxLevel: levelCap(b.maxLevel),
     type: pick(b.type, BOOK_TYPES, "prepared"),
     progression: pick(b.progression, PROGRESSIONS, "high"),
     ability: typeof b.ability === "string" && b.ability ? b.ability : "int",
@@ -102,6 +112,7 @@ export function getSpellcasting(item) {
     cantrips: typeof m.cantrips === "boolean" ? m.cantrips : null,
     domain: m.domain === null || m.domain === undefined || m.domain === "" ? null : Math.max(0, int(m.domain)),
     listTag: String(m.listTag ?? "").trim(),
+    maxLevel: levelCap(m.maxLevel),
     clOffset: int(m.clOffset),
     castsOffset: int(m.castsOffset),
     preparedOffset: int(m.preparedOffset),
@@ -134,6 +145,12 @@ export function modifiedBookOf(actor, itemId) {
 /** The class tag whose spell list a book reads, when that is not its own class. */
 export function listTagOf(actor, bookId) {
   return actor?.getFlag?.(MODULE_ID, LISTS_FLAG)?.[bookId] || null;
+}
+
+/** The highest spell level on a book's list, or null when uncapped. */
+export function maxLevelOf(actor, bookId) {
+  const n = actor?.getFlag?.(MODULE_ID, MAX_FLAG)?.[bookId];
+  return Number.isFinite(n) ? n : null;
 }
 
 /** The system a Grant config makes its book in. */
@@ -305,21 +322,29 @@ export function reconcileSpellcasting(actor) {
 async function run(actor) {
   const granted = await runGrants(actor);
   const modified = await runModify(actor, granted.fresh);
-  // A Modify's list wins over the Grant that made the book.
-  const listed = await syncLists(actor, { ...granted.lists, ...modified.lists });
+  // A Modify's list and cap win over the Grant that made the book.
+  const listed = await syncLists(
+    actor,
+    { ...granted.lists, ...modified.lists },
+    { ...granted.maxes, ...modified.maxes }
+  );
   const advanced = await runRows(actor);
   return granted.changed || modified.changed || listed || advanced;
 }
 
-/** Bring the per-book spell-list tags in line with what Grant and Modify want. */
-async function syncLists(actor, want) {
-  const have = actor.getFlag(MODULE_ID, LISTS_FLAG) ?? {};
+/** Bring the per-book spell-list tags and level caps in line with what Grant and Modify want. */
+async function syncLists(actor, want, wantMax = {}) {
   const update = {};
-  for (const bookId of new Set([...Object.keys(have), ...Object.keys(want)])) {
-    if (want[bookId] === have[bookId]) continue;
-    if (want[bookId]) update[`flags.${MODULE_ID}.${LISTS_FLAG}.${bookId}`] = want[bookId];
-    else update[`flags.${MODULE_ID}.${LISTS_FLAG}.-=${bookId}`] = null;
-  }
+  const sync = (flag, wanted, present) => {
+    const have = actor.getFlag(MODULE_ID, flag) ?? {};
+    for (const bookId of new Set([...Object.keys(have), ...Object.keys(wanted)])) {
+      if (wanted[bookId] === have[bookId]) continue;
+      if (present(wanted[bookId])) update[`flags.${MODULE_ID}.${flag}.${bookId}`] = wanted[bookId];
+      else update[`flags.${MODULE_ID}.${flag}.-=${bookId}`] = null;
+    }
+  };
+  sync(LISTS_FLAG, want, (v) => !!v);
+  sync(MAX_FLAG, wantMax, (v) => Number.isFinite(v));
   if (!Object.keys(update).length) return false;
   await actor.update(update, { render: false });
   return true;
@@ -417,13 +442,14 @@ async function grantSystem(actor, system) {
   const ledger = sys.flag;
   const before = actor.getFlag(MODULE_ID, ledger) ?? {};
   const granters = actor.items.filter((it) => grants(it) && grantSystemOf(getSpellcasting(it).book) === system);
-  if (!granters.length && !Object.keys(before).length) return { changed: false, lists: {}, fresh: new Set() };
+  if (!granters.length && !Object.keys(before).length) return { changed: false, lists: {}, maxes: {}, fresh: new Set() };
 
   const books = sys.books(actor);
   const bookBase = sys.base;
   const flagBase = `flags.${MODULE_ID}`;
   const update = {};
   const wantLists = {};
+  const wantMax = {};
   const kept = new Set();
   // Books taken this pass. Every field was written, so a Modify on one applies again.
   const fresh = new Set();
@@ -503,6 +529,7 @@ async function grantSystem(actor, system) {
     if (stale) update[`${flagBase}.${ledger}.${item.id}`] = { book: bookId, stamp: applied };
 
     if (system === "spell" && cfg.listTag && cfg.listTag !== levelClass) wantLists[bookId] = cfg.listTag;
+    if (system === "spell" && cfg.maxLevel !== null) wantMax[bookId] = cfg.maxLevel;
   }
 
   // Retire the book of an item that left, lost its class, or no longer grants.
@@ -518,9 +545,9 @@ async function grantSystem(actor, system) {
     update[`${flagBase}.${ledger}.-=${itemId}`] = null;
   }
 
-  if (!Object.keys(update).length) return { changed: false, lists: wantLists, fresh };
+  if (!Object.keys(update).length) return { changed: false, lists: wantLists, maxes: wantMax, fresh };
   await actor.update(update, { render: false });
-  return { changed: true, lists: wantLists, fresh };
+  return { changed: true, lists: wantLists, maxes: wantMax, fresh };
 }
 
 // ─── Modify ─────────────────────────────────────────────────────────────────────
@@ -574,13 +601,14 @@ const warnedClash = new Set();
  * an edit made on the actor sheet stays.
  *
  * @param {Set<string>} [fresh] - Books a Grant took this pass
- * @returns {Promise<{ changed: boolean, lists: Record<string, string> }>}
+ * @returns {Promise<{ changed: boolean, lists: Record<string, string>, maxes: Record<string, number> }>}
  */
 async function runModify(actor, fresh = new Set()) {
   const before = actor.getFlag(MODULE_ID, MODS_FLAG) ?? {};
   const modifiers = actor.items.filter(modifies);
   const lists = {};
-  if (!modifiers.length && !Object.keys(before).length) return { changed: false, lists };
+  const maxes = {};
+  if (!modifiers.length && !Object.keys(before).length) return { changed: false, lists, maxes };
 
   const books = actor.system?.attributes?.spells?.spellbooks ?? {};
   const granted = new Set(Object.values(actor.getFlag(MODULE_ID, BOOKS_FLAG) ?? {}).map((rec) => rec?.book));
@@ -599,6 +627,7 @@ async function runModify(actor, fresh = new Set()) {
     const m = getSpellcasting(item).modify;
     want.set(item.id, { book: bookId, fields: modifyFields(m), terms: modifyTerms(m), name: item.name });
     if (m.listTag && m.listTag !== tag) lists[bookId] = m.listTag;
+    if (m.maxLevel !== null) maxes[bookId] = m.maxLevel;
   }
 
   /** Another item's live record of the same setting on the same book. */
@@ -698,9 +727,9 @@ async function runModify(actor, fresh = new Set()) {
   }
   for (const [itemId, keys] of ops) for (const [key, value] of keys) update[`${flagBase}.${itemId}.${key}`] = value;
 
-  if (!Object.keys(update).length) return { changed: false, lists };
+  if (!Object.keys(update).length) return { changed: false, lists, maxes };
   await actor.update(update, { render: false });
-  return { changed: true, lists };
+  return { changed: true, lists, maxes };
 }
 
 /**
@@ -720,6 +749,27 @@ function withListTag(actor, bookId, fn) {
   }
 }
 
+/**
+ * A spell added to a capped book above its highest level is added anyway (it may be
+ * what the player wants: a scroll, a borrowed spell), with a warning.
+ */
+function warnAboveMax(item) {
+  const actor = item?.actor;
+  const bookId = item?.system?.spellbook;
+  const max = maxLevelOf(actor, bookId);
+  const level = item?._source?.system?.level ?? item?.system?.level;
+  if (max === null || !Number.isFinite(level) || level <= max) return;
+  const book = actor.system?.attributes?.spells?.spellbooks?.[bookId];
+  ui.notifications.warn(
+    game.i18n.format("PF1EL.Cast.Warn.AboveMax", {
+      spell: item.name,
+      level,
+      book: book?.label || book?.name || bookId,
+      max,
+    })
+  );
+}
+
 Hooks.once("ready", () => {
   if (!game.modules.get("lib-wrapper")?.active) {
     return void console.error(LOG, "lib-wrapper is not active: spell lists set on granted spellbooks are ignored.");
@@ -729,7 +779,9 @@ Hooks.once("ready", () => {
     MODULE_ID,
     "CONFIG.Item.documentClasses.spell._adjustNewItem",
     function (wrapped, item, ...args) {
-      return withListTag(item?.actor, item?.system?.spellbook, () => wrapped(item, ...args));
+      const result = withListTag(item?.actor, item?.system?.spellbook, () => wrapped(item, ...args));
+      warnAboveMax(item);
+      return result;
     },
     "WRAPPER"
   );

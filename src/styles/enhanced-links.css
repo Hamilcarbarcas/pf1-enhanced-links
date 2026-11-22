@@ -606,6 +606,29 @@ li.item.pf1el-sel-pending .item-name h4 a.pf1el-sel-tag:hover {
   display: none;
 }
 
+/* Per-row class level and HP button on the system's Supplements tab (§ Feature 12). */
+table.item-links td.item-name .el-level {
+  flex: 0 0 auto;
+  margin-left: 0.35rem;
+  font-size: 0.8em;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+table.item-links td.item-name .el-level:hover,
+table.item-links td.item-name .el-level.active {
+  opacity: 1;
+}
+
+table.item-links td.item-name .el-level.active {
+  color: var(--color-text-hyperlink, #ff6400);
+}
+
+table.item-links td.item-name .el-level .el-level-value {
+  margin-left: 0.15rem;
+  font-weight: bold;
+}
+
 /* Per-row prerequisites button on the system's Supplements tab (§ Feature 9). */
 table.item-links td.item-name .el-prereq {
   flex: 0 0 auto;
@@ -702,6 +725,76 @@ table.item-links td.item-name .el-prereq.active {
   content: "\21B3";
   margin-right: 0.25rem;
   opacity: 0.5;
+}
+
+/* Collapsing children: the caret sits in the indent, just left of the marker. */
+.pf1.actor .feats-body li.item.pf1el-child > .item-name {
+  position: relative;
+}
+
+.pf1.actor .feats-body ol.item-list > li .pf1el-caret {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc((var(--pf1el-depth, 1) - 1) * 1.1rem);
+  width: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--pf1-control-color, inherit);
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.pf1.actor .feats-body ol.item-list > li .pf1el-caret:hover {
+  opacity: 1;
+  text-shadow: none;
+}
+
+.pf1.actor .feats-body ol.item-list > li.pf1el-hidden:is(.item, .pf1el-collapsed) {
+  display: none;
+}
+
+.pf1.actor .feats-body ol.item-list > li.pf1el-collapsed {
+  display: flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 2px;
+  border-bottom: 1px solid var(--pf1-faint);
+  background-color: var(--pf1-item-list-bg);
+  cursor: pointer;
+}
+
+.pf1.actor .feats-body ol.item-list > li.pf1el-collapsed:last-child {
+  border-bottom: none;
+}
+
+.pf1.actor .feats-body ol.item-list > li.pf1el-collapsed:hover {
+  background-color: var(--pf1-item-list-hover-bg);
+}
+
+.pf1.actor .feats-body li.pf1el-collapsed > .pf1el-collapsed-name {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding-left: calc(var(--pf1el-depth, 1) * 1.1rem);
+}
+
+.pf1.actor .feats-body li.pf1el-collapsed .pf1el-collapsed-count {
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--pf1-control-color, inherit);
+  opacity: 0.8;
+}
+
+/* Stripes over visible rows only, once a section has hidden ones. */
+.pf1.actor .feats-body ol.item-list.pf1el-restripe > li:is(.item, .pf1el-collapsed):not(:hover) {
+  background-color: var(--pf1-item-list-bg);
+}
+
+.pf1.actor .feats-body ol.item-list.pf1el-restripe > li.pf1el-alt:is(.item, .pf1el-collapsed):not(:hover) {
+  background-color: var(--pf1-item-list-bg-alt);
 }
 
 /* "Granted by" on a child item's own sheet. */

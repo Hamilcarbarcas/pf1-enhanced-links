@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- **Class level and HP on supplements**: a class row on the system's Supplements tab can set
+  the level and HP the class arrives with, such as a race's racial Hit Dice. HP takes a formula
+  with `@level` and `@hd`.
+- **Highest spell level** on a granted or modified spellbook: the book's spell list stops at
+  that level, for classes that use another class's list only partway (a warpriest on the
+  cleric list to 6th). Adding a spell above it warns but still adds it; Spell Supplements
+  never grant one above it.
 - **Formulas on granted items**: `@item.slotLevel` (the level an item was gained at; for a pick,
   the level of the slot that picked it), `@item.pickCount` (how many slots hold a repeatable
   pick), and `@item.countSince.<tag>` (the actor's items with that tag gained at or after this
@@ -16,6 +23,10 @@
   item under **Granted by**. A child that is a general feat adds 1 to the character's feat total,
   so it doesn't use up a feat, whatever granted it: a class feature, a racial trait, or another
   feat. A feat that steps aside for its pick still counts once, through the pick.
+- **Collapsible child items**: a caret beside a parent's first child hides its children
+  behind a short row showing how many are hidden. Remembered per user.
+- **Section counts skip child items**: Little Helper's **Count** box in a Features tab
+  section header leaves out items listed under a parent. Its tooltip gives the full count.
 - **Nest under** on a Selections granting feature: drop the feature that describes the choice
   ("Rage Powers"), and the granting feature and its picks are listed under it on the Features tab.
 - **Sub-feats hidden in the Feats browser**: feats tagged `Sub-Feat` are left out of the Feats

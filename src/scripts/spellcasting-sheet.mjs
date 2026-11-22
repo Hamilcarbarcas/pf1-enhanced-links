@@ -100,6 +100,7 @@ function modifyMarkup(item, m, editable) {
       t("PF1EL.Cast.Book.List"),
       `<input type="text" data-mod="listTag" value="${esc(m.listTag)}" placeholder="${esc(keep[1])}"${dis}>`
     )}
+    ${group(t("PF1EL.Cast.Book.MaxLevel"), number("maxLevel", m.maxLevel ?? "", ` min="0" max="9" placeholder="${esc(keep[1])}"`))}
     <div class="${MARKER}-sub">${t("PF1EL.Cast.Mod.OffsetsTitle")}</div>
     <p class="notes">${t("PF1EL.Cast.Mod.OffsetsHint")}</p>
     ${group(t("PF1.LevelOffset"), offset("clOffset"))}
@@ -179,6 +180,11 @@ function grantMarkup(item, cfg, editable) {
     ${group(t("PF1.Spellcasting.Type.Label"), select("spells", spells, book.spells))}
     ${spellOnly(`${group(t("PF1EL.Cast.Book.List"), text("listTag", book.listTag, "wizard"))}
     <p class="notes">${t("PF1EL.Cast.Book.ListHint")}</p>
+    ${group(
+      t("PF1EL.Cast.Book.MaxLevel"),
+      `<input type="number" data-book="maxLevel" value="${book.maxLevel ?? ""}" step="1" min="0" max="9"${dis}>`
+    )}
+    <p class="notes">${t("PF1EL.Cast.Book.MaxLevelHint")}</p>
     ${group(t("PF1.Type"), select("type", types, book.type))}`)}
     ${group(t("PF1.Spellcasting.Progression.Label"), select("progression", progressions, book.progression))}
     ${group(t("PF1.SpellcastingAbility"), select("ability", abilities, book.ability))}
@@ -394,6 +400,7 @@ function draw(app, tab, old = null) {
       let value = el.value.trim();
       if (key === "cantrips") value = value === "" ? null : value === "true";
       else if (key === "domain") value = value === "" ? null : Math.max(0, Math.floor(Number(value) || 0));
+      else if (key === "maxLevel") value = value === "" ? null : Math.clamp(Math.floor(Number(value) || 0), 0, 9);
       else if (el.type === "number") value = Math.floor(Number(value) || 0);
       else if (el.tagName === "SELECT") value = value || null;
       await saveConfig(item, { [`modify.${key}`]: value });
@@ -403,7 +410,9 @@ function draw(app, tab, old = null) {
   for (const el of section.querySelectorAll("[data-book]")) {
     el.addEventListener("change", async (ev) => {
       ev.stopPropagation();
-      const value = el.type === "checkbox" ? el.checked : el.type === "number" ? Number(el.value) || 0 : el.value.trim();
+      let value = el.type === "checkbox" ? el.checked : el.type === "number" ? Number(el.value) || 0 : el.value.trim();
+      // Blank means no cap, which 0 (cantrips only) can't stand for.
+      if (el.dataset.book === "maxLevel") value = el.value.trim() === "" ? null : Math.clamp(Math.floor(Number(el.value) || 0), 0, 9);
       await saveConfig(item, { [`book.${el.dataset.book}`]: value });
       // Psionic shows a different set of fields.
       if (el.dataset.book === "spells" && section.isConnected) redraw();

@@ -40,7 +40,7 @@ import { SCRIPT_TAB, scriptsFor, runCreateScripts } from "./create-scripts.mjs";
 import { applyRename, renameFor } from "./renames.mjs";
 import { dedupeEnabled, dataKeys, findExisting, isManaged, referencers } from "./dedupe.mjs";
 import { BOOK_FLAG, resolveBook, settleBookChoices } from "./supplement-book.mjs";
-import { hasSpellcasting, hasSpellcastingLedger, listTagOf, reconcileSpellcasting } from "./spellcasting.mjs";
+import { hasSpellcasting, hasSpellcastingLedger, listTagOf, maxLevelOf, reconcileSpellcasting } from "./spellcasting.mjs";
 import {
   GRANT_AS,
   PICKS_FLAG,
@@ -52,6 +52,7 @@ import {
   slotsOf,
 } from "./selections.mjs";
 import { gatedLinks, hasGatedSupplements, hasFeatureGates, statsOf } from "./supplement-prereqs.mjs";
+import { classSetup } from "./supplement-levels.mjs";
 import { meets } from "./prereq-rules.mjs";
 
 const LOG = "PF1 Enhanced Links |";
@@ -170,6 +171,9 @@ function canCastLevel(actor, bookId, spellLevel) {
     // level threshold is what paces a manual book.
     max = book.casterType === "low" ? 4 : book.casterType === "med" ? 6 : 9;
   }
+  // A book whose list stops short (a warpriest on the cleric list) never takes a spell above it.
+  const cap = maxLevelOf(actor, bookId);
+  if (cap !== null) max = Math.min(max, cap);
   return spellLevel <= max;
 }
 
@@ -221,6 +225,7 @@ function stampGrant(data, source, parentId) {
 /**
  * A gated system supplement, built the way the system's _createSupplements builds one
  * (source flag, inherited class link), plus our provenance. DESIGN.md § Feature 9.
+ * A class row's level and HP apply here too (§ Feature 12).
  */
 async function buildSupplement(uuid, parent) {
   const built = await buildFromSource(uuid);
@@ -229,6 +234,9 @@ async function buildSupplement(uuid, parent) {
   foundry.utils.setProperty(data, "flags.pf1.source", uuid);
   const classLink = parent.system?.class;
   if (classLink && source.type === "feat" && source.system?.subType === "classFeat") data.system.class = classLink;
+  // A class row's starting level and HP (§ Feature 12).
+  const setup = classSetup(data, [parent], uuid);
+  if (setup) for (const [path, value] of Object.entries(setup)) foundry.utils.setProperty(data, path, value);
   stampGrant(data, uuid, parent.id);
   return data;
 }

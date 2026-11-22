@@ -9,6 +9,8 @@
  *   • Nesting: on the Features tab, a child listed in the same section as its parent
  *     is moved under the parent and indented. A granting feature's Nest under adds a
  *     display-only host for it and its picks (Rage Power (lvl 2) under Rage Powers).
+ *   • Collapsing: a caret on a parent's first child row hides its children behind
+ *     one short row. Saved per user (user flag, parent item uuids).
  *
  * Parents are read from four places, first match wins:
  *   1. the parent's `system.links.children` (system Supplements, engine grants, picks)
@@ -24,6 +26,12 @@ import { HOME_FLAG, nestUnderOf } from "./selections.mjs";
 const GRANTED = "granted";
 const FEAT = "feat";
 const CHILD_CLASS = "pf1el-child";
+const STUB_CLASS = "pf1el-collapsed";
+const CARET_CLASS = "pf1el-caret";
+const HIDDEN_CLASS = "pf1el-hidden";
+const RESTRIPE_CLASS = "pf1el-restripe";
+const ALT_CLASS = "pf1el-alt";
+const COLLAPSED_FLAG = "collapsedChildren";
 
 /**
  * Map of child id -> parent item, for every child on the actor.
@@ -138,8 +146,134 @@ function hostId(id, parents, nests, rowById) {
   return candidates.find((c) => c && c.id !== id && rowById.has(c.id))?.id ?? null;
 }
 
-/** Reorder one section's rows so each child follows its parent, indented by depth. */
-function nestList(list, parents, nests) {
+// ─── Collapsing (§ Feature 10, Collapsing) ──────────────────────────────────────
+
+let collapsedCache = null;
+
+/** Uuids of the parent items this user has collapsed. */
+function collapsedSet() {
+  if (!collapsedCache) {
+    const stored = game.user?.getFlag(MODULE_ID, COLLAPSED_FLAG);
+    collapsedCache = new Set(Array.isArray(stored) ? stored : []);
+  }
+  return collapsedCache;
+}
+
+Hooks.on("updateUser", (user, change) => {
+  if (user.isSelf && change.flags?.[MODULE_ID] !== undefined) collapsedCache = null;
+});
+
+const isLive = (uuid) => {
+  try {
+    return !!fromUuidSync(uuid, { strict: false });
+  } catch {
+    return false;
+  }
+};
+
+/** Flip one parent's state, redraw its section in place, then save. */
+function toggleCollapsed(actor, itemId, list) {
+  const uuid = actor.items.get(itemId)?.uuid;
+  if (!uuid) return;
+  const next = new Set(collapsedSet());
+  if (next.has(uuid)) next.delete(uuid);
+  else next.add(uuid);
+  for (const u of next) if (!isLive(u)) next.delete(u);
+  collapsedCache = next;
+  try {
+    applyNesting(actor, [list]);
+  } catch (err) {
+    console.error("PF1 Enhanced Links | redrawing collapsed children failed on", actor.name, err);
+  }
+  game.user.setFlag(MODULE_ID, COLLAPSED_FLAG, [...next]).catch((err) => {
+    console.error("PF1 Enhanced Links | saving collapsed children failed", err);
+  });
+}
+
+function caretIcon(collapsed) {
+  const i = document.createElement("i");
+  i.className = `fa-solid fa-caret-${collapsed ? "right" : "down"}`;
+  i.inert = true;
+  return i;
+}
+
+/** Caret on a parent's first child row; hides the parent's children. */
+function expandedCaret(onToggle) {
+  const caret = document.createElement("a");
+  caret.className = CARET_CLASS;
+  caret.dataset.tooltip = "PF1EL.Children.Collapse";
+  caret.append(caretIcon(false));
+  caret.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation(); // keep the row's own click (item summary) from firing
+    onToggle();
+  });
+  return caret;
+}
+
+/** Short row standing in for a collapsed parent's children. */
+function collapsedRow(depth, hiddenRows, onToggle) {
+  const row = document.createElement("li");
+  row.className = STUB_CLASS;
+  row.style.setProperty("--pf1el-depth", String(depth));
+  row.dataset.tooltipHtml = hiddenRows
+    .map((li) => escape(li.querySelector(":scope > .item-name h4")?.textContent?.trim() ?? ""))
+    .join("<br>");
+
+  const name = document.createElement("div");
+  name.className = "pf1el-collapsed-name";
+  const caret = document.createElement("span");
+  caret.className = CARET_CLASS;
+  caret.append(caretIcon(true));
+  const count = document.createElement("span");
+  count.className = "pf1el-collapsed-count";
+  count.textContent = String(hiddenRows.length);
+  name.append(caret, count);
+  row.append(name);
+
+  row.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onToggle();
+  });
+  return row;
+}
+
+/** Re-stripe visible rows: the system's nth-child stripes count hidden ones too. */
+function restripe(list, on) {
+  list.classList.toggle(RESTRIPE_CLASS, on);
+  let position = 0;
+  for (const li of list.querySelectorAll(":scope > li")) {
+    if (!on) {
+      li.classList.remove(ALT_CLASS);
+      continue;
+    }
+    if (li.classList.contains(HIDDEN_CLASS)) continue;
+    position += 1;
+    li.classList.toggle(ALT_CLASS, position % 2 === 0);
+  }
+}
+
+// ─── Nesting ────────────────────────────────────────────────────────────────────
+
+function applyNesting(actor, lists) {
+  const parents = parentMap(actor);
+  const nests = nestMap(actor);
+  if (!parents.size && !nests.size) return;
+  const collapsed = collapsedSet();
+  for (const list of lists) nestList(list, parents, nests, actor, collapsed);
+}
+
+/**
+ * Reorder one section's rows so each child follows its parent, indented by depth.
+ * A collapsed parent's descendants are hidden behind one short row. Safe to re-run
+ * on an already nested list.
+ */
+function nestList(list, parents, nests, actor, collapsed) {
+  for (const el of list.querySelectorAll(`:scope > li.${STUB_CLASS}, .${CARET_CLASS}`)) el.remove();
+  for (const el of list.querySelectorAll(`:scope > li.${HIDDEN_CLASS}`)) el.classList.remove(HIDDEN_CLASS);
+  restripe(list, false);
+
   const rows = [...list.querySelectorAll(":scope > li.item[data-item-id]")];
   if (rows.length < 2) return;
   const rowById = new Map(rows.map((li) => [li.dataset.itemId, li]));
@@ -156,25 +290,52 @@ function nestList(list, parents, nests) {
   }
   if (!kids.size) return;
 
+  // size: how many rows follow this one in its subtree.
   const ordered = [];
   const seen = new Set();
-  const visit = (li, depth) => {
+  const visit = (li, depth, parent) => {
     if (seen.has(li)) return;
     seen.add(li);
-    ordered.push([li, depth]);
-    for (const k of kids.get(li.dataset.itemId) ?? []) visit(k, depth + 1);
+    const entry = { li, depth, firstChild: null, size: 0 };
+    const start = ordered.push(entry);
+    if (parent) parent.firstChild ??= entry;
+    for (const k of kids.get(li.dataset.itemId) ?? []) visit(k, depth + 1, entry);
+    entry.size = ordered.length - start;
   };
-  for (const li of roots) visit(li, 0);
+  for (const li of roots) visit(li, 0, null);
   // A link loop leaves rows no root reaches; keep them, unnested.
-  for (const li of rows) visit(li, 0);
+  for (const li of rows) visit(li, 0, null);
 
   const anchor = rows.at(-1).nextSibling;
-  for (const [li, depth] of ordered) {
+  let hideBelow = Infinity; // depth of the nearest visible collapsed ancestor
+  let anyHidden = false;
+  ordered.forEach((entry, i) => {
+    const { li, depth } = entry;
     list.insertBefore(li, anchor);
     li.classList.toggle(CHILD_CLASS, depth > 0);
     if (depth > 0) li.style.setProperty("--pf1el-depth", String(depth));
     else li.style.removeProperty("--pf1el-depth");
-  }
+
+    const hidden = depth > hideBelow;
+    if (!hidden) hideBelow = Infinity;
+    li.classList.toggle(HIDDEN_CLASS, hidden);
+    anyHidden ||= hidden;
+    if (!entry.firstChild) return;
+
+    const itemId = li.dataset.itemId;
+    const onToggle = () => toggleCollapsed(actor, itemId, list);
+    const uuid = actor.items.get(itemId)?.uuid;
+    if (uuid && collapsed.has(uuid)) {
+      const hiddenRows = ordered.slice(i + 1, i + 1 + entry.size).map((e) => e.li);
+      const stub = collapsedRow(depth + 1, hiddenRows, onToggle);
+      stub.classList.toggle(HIDDEN_CLASS, hidden);
+      list.insertBefore(stub, anchor);
+      if (!hidden) hideBelow = depth;
+    } else {
+      entry.firstChild.li.querySelector(":scope > .item-name")?.prepend(expandedCaret(onToggle));
+    }
+  });
+  if (anyHidden) restripe(list, true);
 }
 
 // ─── "Granted by" on the child's own sheet ──────────────────────────────────────
@@ -216,6 +377,30 @@ Hooks.on("renderItemSheet", (app, html) => {
   summary.append(entry);
 });
 
+// ─── Little Helper's section count ──────────────────────────────────────────────
+
+const COUNTED_FLAG = "pf1elCounted";
+
+/**
+ * Take nested rows out of Little Helper's "Count: N" box in each section header.
+ * Little Helper subscribes at ready, so it draws after nesting; this runs a
+ * microtask later, once every render hook has finished.
+ */
+function discountChildren(lists) {
+  for (const list of lists) {
+    const box = list.querySelector(".item-list-header .lil-feats-possessed");
+    if (!box || box.dataset[COUNTED_FLAG]) continue;
+    const match = box.textContent.match(/^(.*?)(\d+)\s*$/);
+    if (!match) continue;
+    const children = list.querySelectorAll(`:scope > li.item.${CHILD_CLASS}`).length;
+    if (!children) continue;
+    const total = Number(match[2]);
+    box.textContent = `${match[1]}${Math.max(0, total - children)}`;
+    box.dataset[COUNTED_FLAG] = "1";
+    box.dataset.tooltip = game.i18n.format("PF1EL.Children.CountWithSubItems", { count: total });
+  }
+}
+
 Hooks.on("renderActorSheet", (app, html) => {
   const actor = app.actor;
   if (!actor?.items?.size) return;
@@ -223,13 +408,18 @@ Hooks.on("renderActorSheet", (app, html) => {
   const lists = root?.querySelectorAll(".feats-body ol.item-list");
   if (!lists?.length) return;
   try {
-    const parents = parentMap(actor);
-    const nests = nestMap(actor);
-    if (!parents.size && !nests.size) return;
-    for (const list of lists) nestList(list, parents, nests);
+    applyNesting(actor, [...lists]);
   } catch (err) {
     console.error("PF1 Enhanced Links | nesting child features failed on", actor.name, err);
+    return;
   }
+  queueMicrotask(() => {
+    try {
+      discountChildren(lists);
+    } catch (err) {
+      console.error("PF1 Enhanced Links | adjusting the section counts failed on", actor.name, err);
+    }
+  });
 });
 
 // Public: astora-mod's trait limit asks which traits are children.
