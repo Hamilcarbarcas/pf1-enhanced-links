@@ -200,6 +200,9 @@
 - **Spellcasting** and **Selections** moved from the Details tab to the Advanced tab, sorted among the other modules' sections, and are hidden until used. Tick them under **Optional Sections** on the same tab to show them (shared sheet kit 1.8.0).
 
 ### Fixed
+- **Domain spells land at their domain level**: a Spell Supplements row set to Domain/School
+  now gives the spell its level on the granting domain's list, not on the class's list
+  (Produce Flame from the Fire Domain is 2nd level for a druid, not 1st).
 - Replacing a feature that grants a spellbook with another for the same class, in one step
   (an archetype swap), gave the new feature a second book and split the spells. It now takes
   over the same book, and changes other features make to that book are applied again.

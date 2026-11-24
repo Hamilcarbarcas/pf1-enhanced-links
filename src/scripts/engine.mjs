@@ -182,12 +182,42 @@ function canCastLevel(actor, bookId, spellLevel) {
  * when there is one, else its own. Shared so the gate is checked against exactly
  * the level buildSpell will write.
  */
-function resolveSpellLevel(source, tag, mode) {
+function resolveSpellLevel(source, tag, mode, domainOf = null) {
+  if (mode !== MODE.spelllike && domainOf) {
+    const level = domainListLevel(source, domainOf);
+    if (level !== null) return level;
+  }
   if (mode !== MODE.spelllike && tag) {
     const learned = source.system?.learnedAt?.class?.[tag];
     if (Number.isFinite(learned)) return Math.clamp(learned, 0, 9);
   }
   return source.system?.level ?? 0;
+}
+
+/** "Fire Domain", "Ash Subdomain", "Fire Elemental School" → "fire" / "ash". */
+function domainKeyOf(name) {
+  return String(name ?? "")
+    .replace(/\(.*?\)/g, "")
+    .replace(/\b(sub)?domain\b|\belemental school\b|\bschool\b/gi, "")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * A Domain/School row's spell level on the granting item's own list (Produce Flame is
+ * druid 1 but Fire domain 2). Matched by the item's name against `learnedAt.domain`,
+ * `subDomain`, and `elementalSchool`; a spell on exactly one such list uses that one
+ * when the name matches none. Null when the spell has no such entry.
+ */
+function domainListLevel(source, parent) {
+  const learned = source.system?.learnedAt ?? {};
+  const entries = ["domain", "subDomain", "elementalSchool"].flatMap((k) =>
+    Object.entries(learned[k] ?? {}).filter(([, v]) => Number.isFinite(v))
+  );
+  if (!entries.length) return null;
+  const key = domainKeyOf(parent?.name);
+  const hit = entries.find(([name]) => domainKeyOf(name) === key) ?? (entries.length === 1 ? entries[0] : null);
+  return hit ? Math.clamp(hit[1], 0, 9) : null;
 }
 
 /**
@@ -327,7 +357,8 @@ async function buildSpell(
   poolKey = null,
   scripted = false,
   domain = false,
-  bonusKnown = false
+  bonusKnown = false,
+  domainOf = null
 ) {
   const built = await buildFromSource(uuid);
   if (!built) return null;
@@ -337,7 +368,7 @@ async function buildSpell(
     return null;
   }
   foundry.utils.setProperty(data, "system.spellbook", bookId);
-  foundry.utils.setProperty(data, "system.level", resolveSpellLevel(source, tag, mode));
+  foundry.utils.setProperty(data, "system.level", resolveSpellLevel(source, tag, mode, domain ? domainOf : null));
   if (domain) {
     foundry.utils.setProperty(data, "system.domain", true);
     foundry.utils.setProperty(data, `flags.${MODULE_ID}.${DOMAIN_STAMP}`, true);
@@ -476,7 +507,8 @@ async function buildDesired(actor, parent, resolve) {
     let castable = true;
     if (!spelllike && cfg.requireCastable && bookId != null) {
       const source = await resolve(uuid);
-      castable = !!source && canCastLevel(actor, bookId, resolveSpellLevel(source, listTag, cfg.mode));
+      castable =
+        !!source && canCastLevel(actor, bookId, resolveSpellLevel(source, listTag, cfg.mode, cfg.domain ? parent : null));
     }
 
     out.push({
@@ -502,7 +534,8 @@ async function buildDesired(actor, parent, resolve) {
           poolId ? `${parent.id}:${poolId}` : null,
           scripted,
           !spelllike && cfg.domain,
-          cfg.mode === MODE.class && cfg.bonusKnown
+          cfg.mode === MODE.class && cfg.bonusKnown,
+          parent
         ),
     });
   }
@@ -543,7 +576,8 @@ async function buildDesired(actor, parent, resolve) {
         met: bookId != null,
         domain: row.domain,
         bonusKnown: row.bonusKnown,
-        build: () => buildSpell(pick.uuid, bookId, listTag, MODE.class, parent.id, 0, null, false, row.domain, row.bonusKnown),
+        build: () =>
+          buildSpell(pick.uuid, bookId, listTag, MODE.class, parent.id, 0, null, false, row.domain, row.bonusKnown, parent),
       });
       continue;
     }
